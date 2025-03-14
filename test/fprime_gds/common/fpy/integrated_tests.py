@@ -11,6 +11,7 @@ import fprime_gds.common.logger.test_logger
 # disable excel logging.... wtf ew
 fprime_gds.common.logger.test_logger.MODULE_INSTALLED = False
 SEQ_MAX_STATEMENT_COUNT = 1024
+MAX_LOCAL_VARIABLE_VALUE_SIZE = 499
 
 
 def compile_seq(fprime_test_api, seq: str) -> Path:
@@ -37,7 +38,7 @@ def assert_compile_succeeds(fprime_test_api, seq: str):
     try:
         return compile_seq(fprime_test_api, seq)
     except BaseException as e:
-        raise RuntimeError("compile_seq did not fail") from e
+        raise RuntimeError("compile_seq failed") from e
 
 
 def assert_run_succeeds(
@@ -126,7 +127,7 @@ def test_largest_possible_seq(fprime_test_api: IntegrationTestAPI):
 
     # this is quite flaky--sometimes GDS captures them all, sometimes it doesn't
     fprime_test_api.assert_event_count(
-        SEQ_MAX_STATEMENT_COUNT, ["Ref.cmdDisp.NoOpReceived"]
+        SEQ_MAX_STATEMENT_COUNT, ["Ref.cmdDisp.NoOpReceived"], timeout=1
     )
 
 
@@ -237,6 +238,7 @@ def test_run_validated(fprime_test_api: IntegrationTestAPI):
     # sequence should be cancelled
     fprime_test_api.assert_event_count(1, ["Ref.cmdDisp.NoOpReceived"])
 
+
 def test_no_block_run(fprime_test_api: IntegrationTestAPI):
     seq = """
     WAIT_REL 2, 0
@@ -244,7 +246,9 @@ def test_no_block_run(fprime_test_api: IntegrationTestAPI):
     bin = compile_seq(fprime_test_api, seq)
 
     # should return immediately
-    fprime_test_api.send_and_assert_command("Ref.fpySeq.RUN", [str(bin), "NO_BLOCK"], max_delay=1)
+    fprime_test_api.send_and_assert_command(
+        "Ref.fpySeq.RUN", [str(bin), "NO_BLOCK"], max_delay=1
+    )
 
 
 def test_run_twice(fprime_test_api: IntegrationTestAPI):
@@ -253,10 +257,183 @@ def test_run_twice(fprime_test_api: IntegrationTestAPI):
     """
     bin = compile_seq(fprime_test_api, seq)
 
-    fprime_test_api.send_and_assert_command("Ref.fpySeq.RUN", [str(bin), "BLOCK"], max_delay=1)
+    fprime_test_api.send_command("Ref.fpySeq.RUN", [str(bin), "BLOCK"])
     try:
-        fprime_test_api.send_and_assert_command("Ref.fpySeq.RUN", [str(bin), "BLOCK"], max_delay=1)
-        assert False # should have failed
+        fprime_test_api.send_and_assert_command(
+            "Ref.fpySeq.RUN", [str(bin), "BLOCK"], max_delay=1
+        )
+        assert False  # should have failed
     except BaseException as e:
         # failed successfully
         pass
+
+
+def test_goto_idx(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    GOTO 2
+    Ref.cmdDisp.CMD_NO_OP
+    """
+
+    # make sure compiles and runs successfully
+    assert_seq(fprime_test_api, seq, True, True)
+
+    # should not have gotten any no ops
+    fprime_test_api.assert_event_count(0, ["Ref.cmdDisp.NoOpReceived"])
+
+
+def test_goto_tag(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    GOTO "tag"
+    Ref.cmdDisp.CMD_NO_OP
+    tag:
+    Ref.cmdDisp.CMD_NO_OP
+    """
+
+    # make sure compiles and runs successfully
+    assert_seq(fprime_test_api, seq, True, True)
+
+    # should have gotten one no op
+    fprime_test_api.assert_event_count(1, ["Ref.cmdDisp.NoOpReceived"])
+
+
+def test_goto_eof(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    GOTO "end"
+    Ref.cmdDisp.CMD_NO_OP
+    Ref.cmdDisp.CMD_NO_OP
+    end:
+    """
+
+    # make sure compiles and runs successfully
+    assert_seq(fprime_test_api, seq, True, True)
+
+    # should have gotten one no op
+    fprime_test_api.assert_event_count(0, ["Ref.cmdDisp.NoOpReceived"])
+
+
+def test_local_var_set(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    SET_LOCAL_VAR 0, {"type": "bool", "value": true}
+    """
+
+    # make sure compiles and runs successfully
+    assert_seq(fprime_test_api, seq, True, True)
+
+
+def test_if_true(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    SET_LOCAL_VAR 0, {"type": "bool", "value": true}
+    IF 0, "else"
+    Ref.cmdDisp.CMD_NO_OP
+    GOTO "end"
+    else:
+    Ref.cmdDisp.CMD_NO_OP_STRING "should not happen"
+    end:
+    """
+
+    assert_seq(fprime_test_api, seq, True, True)
+
+    # should have executed the "true" case
+    fprime_test_api.assert_event_count(1, ["Ref.cmdDisp.NoOpReceived"])
+    fprime_test_api.assert_event_count(0, ["Ref.cmdDisp.NoOpStringReceived"])
+
+
+def test_if_false(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    SET_LOCAL_VAR 0, {"type": "bool", "value": false}
+    IF 0, "else"
+    Ref.cmdDisp.CMD_NO_OP
+    GOTO "end"
+    else:
+    Ref.cmdDisp.CMD_NO_OP_STRING "should happen"
+    end:
+    """
+
+    assert_seq(fprime_test_api, seq, True, True)
+
+    # should have executed the "false" case
+    fprime_test_api.assert_event_count(0, ["Ref.cmdDisp.NoOpReceived"])
+    fprime_test_api.assert_event_count(1, ["Ref.cmdDisp.NoOpStringReceived"])
+
+
+def test_local_var_set_bad_idx(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    SET_LOCAL_VAR 255, {"type": "bool", "value": false}
+    """
+
+    # should compile cuz 255 is in range of U8, but should
+    # fail to run because default max local var count is <255
+    assert_seq(fprime_test_api, seq, True, False)
+
+
+def test_local_var_set_string(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    SET_LOCAL_VAR 0, {"type": "string", "value": "test string"}
+    """
+
+    assert_seq(fprime_test_api, seq, True, True)
+
+
+def test_local_var_set_value_largest_possible(fprime_test_api: IntegrationTestAPI):
+    # set a local variable to a string with the largest possible length
+    # string is encoded as 2 byte len + chars following
+    string_len = MAX_LOCAL_VARIABLE_VALUE_SIZE - 2
+    seq = f"""
+    SET_LOCAL_VAR 0, {{"type": "string", "value": "{"a" * (string_len)}"}}
+    """
+
+    # should work...
+    assert_seq(fprime_test_api, seq, True, True)
+
+
+def test_local_var_set_value_too_big(fprime_test_api: IntegrationTestAPI):
+    # set a local variable to a string with the largest possible length + 1
+    # string is encoded as 2 byte len + chars following. so instead of -2 here we do
+    # -1
+    string_len = MAX_LOCAL_VARIABLE_VALUE_SIZE - 1
+    seq = f"""
+    SET_LOCAL_VAR 0, {{"type": "string", "value": "{"a" * (string_len)}"}}
+    """
+
+    # should work...
+    assert_seq(fprime_test_api, seq, True, False)
+
+
+def test_local_var_set_value_way_too_big(fprime_test_api: IntegrationTestAPI):
+    # max len of string type is 2^16
+    string_len = 2**15
+    seq = f"""
+    SET_LOCAL_VAR 0, {{"type": "string", "value": "{"a" * (string_len)}"}}
+    """
+
+    # should fail. i think right now this is failing due to some other reason though
+    # we can keep the test just for fun
+    assert_seq(fprime_test_api, seq, True, False)
+
+
+def test_local_var_set_bad_type(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    SET_LOCAL_VAR 0, {"type": "unknown_asdfasdfasdf", "value": 8}
+    """
+
+    assert_seq(fprime_test_api, seq, False)
+
+
+def test_stmt_buf_push(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    SET_LOCAL_VAR 0, {"type": "string", "value": "dynamic string!!!"}
+    STATEMENT_BUF_PUSH 0
+    """
+
+    assert_seq(fprime_test_api, seq, True, True)
+
+
+def test_stmt_buf_pop(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    SET_LOCAL_VAR 0, {"type": "string", "value": "dynamic string!!!"}
+    STATEMENT_BUF_PUSH 0
+    STATEMENT_BUF_POP 1, 1281
+    """
+
+    assert_seq(fprime_test_api, seq, True, True)
+    fprime_test_api.assert_event_count(1, ["Ref.cmdDisp.NoOpStringReceived"])

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import astuple
+import inspect
 import json
 from pathlib import Path
 from argparse import ArgumentParser
@@ -13,9 +14,11 @@ from fprime_gds.common.fpy.types import (
     HEADER_FORMAT,
     FOOTER_FORMAT,
     StatementType,
-    directives
+    DirectiveOpcode,
+    BytecodeParseContext,
 )
 from fprime_gds.common.loaders.cmd_json_loader import CmdJsonLoader
+from fprime_gds.common.loaders.json_loader import PRIMITIVE_TYPE_MAP
 from fprime.common.models.serialize.array_type import ArrayType
 from fprime.common.models.serialize.bool_type import BoolType
 from fprime.common.models.serialize.enum_type import EnumType
@@ -70,7 +73,7 @@ def serialize_statement(stmt: StatementData) -> bytes:
 
 
 def parse_str_as_statement(
-    stmt: str, templates: list[StatementTemplate]
+    stmt: str, templates: list[StatementTemplate], context: BytecodeParseContext
 ) -> StatementData:
     name = stmt.split()[0]
     args = stmt[len(name) :]
@@ -104,10 +107,93 @@ def parse_str_as_statement(
         )
     for index, arg_json in enumerate(args):
         arg_type = matching_template.args[index]
-        arg_value = arg_type(arg_json)
+        if inspect.isclass(arg_type):
+            # it's a type. instantiate it with the json
+            arg_value = arg_type(arg_json)
+        else:
+            # it's a function. give it the json and the ctx
+            arg_value = arg_type(arg_json, context)
         arg_values.append(arg_value)
 
     return StatementData(matching_template, arg_values)
+
+
+def time_type_from_json(js, ctx: BytecodeParseContext):
+    return TimeType(js["time_base"], js["time_context"], js["seconds"], js["useconds"])
+
+
+def arbitrary_type_from_json(js, ctx: BytecodeParseContext):
+    type_name = js["type"]
+
+    if type_name == "string":
+        # by default no max size restrictions in the bytecode
+        return StringType.construct_type(f"String", None)(js["value"])
+
+    # try first checking parsed_types, then check primitive types
+    type_class = ctx.parsed_types.get(
+        type_name, PRIMITIVE_TYPE_MAP.get(type_name, None)
+    )
+    if type_class is None:
+        raise RuntimeError("Unknown type " + str(type_name))
+
+    return type_class(js["value"])
+
+
+def goto_tag_or_idx_from_json(js, ctx: BytecodeParseContext):
+    if isinstance(js, str):
+        # it's a tag
+        if js not in ctx.goto_tags:
+            raise RuntimeError("Unknown goto tag " + str(js))
+        return U32Type(ctx.goto_tags[js])
+
+    # otherwise it is a statement index
+    return U32Type(js)
+
+
+directives: list[StatementTemplate] = [
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.WAIT_REL.value,
+        "WAIT_REL",
+        [U32Type, U32Type],
+    ),
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.WAIT_ABS.value,
+        "WAIT_ABS",
+        [time_type_from_json],
+    ),
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.SET_LOCAL_VAR.value,
+        "SET_LOCAL_VAR",
+        [U8Type, arbitrary_type_from_json],
+    ),
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.GOTO.value,
+        "GOTO",
+        [goto_tag_or_idx_from_json],
+    ),
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.IF.value,
+        "IF",
+        [U8Type, goto_tag_or_idx_from_json],
+    ),
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.STATEMENT_BUF_PUSH.value,
+        "STATEMENT_BUF_PUSH",
+        [U8Type],
+    ),
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.STATEMENT_BUF_POP.value,
+        "STATEMENT_BUF_POP",
+        [U8Type, get_type_obj_for("FwOpcodeType")],
+    ),
+]
 
 
 def main():
@@ -121,7 +207,7 @@ def main():
         "--dictionary",
         type=Path,
         help="The JSON topology dictionary to compile against",
-        required=True
+        required=True,
     )
 
     arg_parser.add_argument(
@@ -144,7 +230,8 @@ def main():
 
     serialize_bytecode(args.input, args.dictionary, args.output)
 
-def serialize_bytecode(input: Path, dictionary: Path, output: Path=None):
+
+def serialize_bytecode(input: Path, dictionary: Path, output: Path = None):
 
     cmd_json_dict_loader = CmdJsonLoader(str(dictionary))
     (cmd_id_dict, cmd_name_dict, versions) = cmd_json_dict_loader.construct_dicts(
@@ -164,17 +251,36 @@ def serialize_bytecode(input: Path, dictionary: Path, output: Path=None):
 
     stmts = []
 
-    for line_idx, line in enumerate(input.read_text().splitlines()):
-        line = line.strip()
-        if line.startswith(";") or len(line) == 0:
-            # ignore comments, empty lines
-            continue
+    context = BytecodeParseContext()
+    context.parsed_types = cmd_json_dict_loader.parsed_types
+
+    input_lines = input.read_text().splitlines()
+    input_lines = [line.strip() for line in input_lines]
+    # remove comments and empty lines
+    input_lines = [
+        line for line in input_lines if not line.startswith(";") and len(line) > 0
+    ]
+
+    goto_tags = {}
+    statement_idx = 0
+    statements = []
+    for stmt_idx, stmt in enumerate(input_lines):
+        if stmt.endswith(":"):
+            # it's a goto tag
+            goto_tags[stmt[:-1]] = statement_idx
+        else:
+            statements.append(stmt)
+            statement_idx += 1
+
+    context.goto_tags = goto_tags
+
+    for stmt_idx, stmt in enumerate(statements):
         try:
-            stmt_data = parse_str_as_statement(line, stmt_templates)
+            stmt_data = parse_str_as_statement(stmt, stmt_templates, context)
             stmts.append(stmt_data)
         except BaseException as e:
             raise RuntimeError(
-                "Exception while parsing line " + str(line_idx + 1)
+                "Exception while parsing statement index " + str(stmt_idx) + ": " + stmt
             ) from e
 
     output_bytes = bytes()

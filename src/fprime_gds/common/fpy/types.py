@@ -1,21 +1,8 @@
-from dataclasses import dataclass
+from __future__ import annotations
+from dataclasses import dataclass, field
 from enum import Enum
 import struct
 from fprime.common.models.serialize.type_base import BaseType
-from fprime.common.models.serialize.time_type import TimeType
-from fprime.common.models.serialize.numerical_types import (
-    F32Type,
-    F64Type,
-    I8Type,
-    I16Type,
-    I32Type,
-    I64Type,
-    U8Type,
-    U16Type,
-    U32Type,
-    U64Type,
-)
-
 
 class StatementType(Enum):
     DIRECTIVE = 0
@@ -64,23 +51,16 @@ class DirectiveOpcode(Enum):
     INVALID = 0
     WAIT_REL = 0x00000001
     WAIT_ABS = 0x00000002
+    SET_LOCAL_VAR = 0x00000003
+    GOTO = 0x00000004
+    IF = 0x00000005
+    STATEMENT_BUF_PUSH = 0x00000006
+    STATEMENT_BUF_POP = 0x00000007
 
+@dataclass
+class BytecodeParseContext:
+    goto_tags: map[str, int] = field(default_factory=dict)
+    """a map of tag name with tag statement index"""
+    parsed_types: map[str, type[BaseType]] = field(default_factory=dict)
+    """a map of name to all parsed types available in the dictionary"""
 
-def time_type_from_json(js):
-    return TimeType(js["time_base"], js["time_context"], js["seconds"], js["useconds"])
-
-
-directives: list[StatementTemplate] = [
-    StatementTemplate(
-        StatementType.DIRECTIVE,
-        DirectiveOpcode.WAIT_REL.value,
-        "WAIT_REL",
-        [U32Type, U32Type],
-    ),
-    StatementTemplate(
-        StatementType.DIRECTIVE,
-        DirectiveOpcode.WAIT_ABS.value,
-        "WAIT_ABS",
-        [time_type_from_json],
-    ),
-]
