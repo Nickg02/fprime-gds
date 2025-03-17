@@ -437,3 +437,51 @@ def test_stmt_buf_pop(fprime_test_api: IntegrationTestAPI):
 
     assert_seq(fprime_test_api, seq, True, True)
     fprime_test_api.assert_event_count(1, ["Ref.cmdDisp.NoOpStringReceived"])
+
+
+def test_get_tlm_val(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    GET_TLM_VAL "Ref.fpySeq.StatementsDispatched", 0
+    """
+
+    assert_seq(fprime_test_api, seq, True, True)
+
+
+def test_get_tlm_val_bad_chan(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    GET_TLM_VAL "Ref.fpySeq.RUN", 0
+    """
+
+    assert_seq(fprime_test_api, seq, False)
+
+
+def test_get_tlm_val_bad_idx(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    GET_TLM_VAL "Ref.fpySeq.StatementsDispatched", 255
+    """
+
+    assert_seq(fprime_test_api, seq, True, False)
+
+
+def test_get_tlm_time(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    GET_TLM_TIME "Ref.fpySeq.StatementsDispatched", 0
+    """
+
+    assert_seq(fprime_test_api, seq, True, True)
+
+
+def test_get_tlm_time_bad_chan(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    GET_TLM_TIME "Ref.fpySeq.RUN", 0
+    """
+
+    assert_seq(fprime_test_api, seq, False)
+
+
+def test_get_tlm_time_bad_idx(fprime_test_api: IntegrationTestAPI):
+    seq = """
+    GET_TLM_TIME "Ref.fpySeq.StatementsDispatched", 255
+    """
+
+    assert_seq(fprime_test_api, seq, True, False)

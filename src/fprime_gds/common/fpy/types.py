@@ -4,6 +4,8 @@ from enum import Enum
 import struct
 from fprime.common.models.serialize.type_base import BaseType
 
+from fprime_gds.common.templates.ch_template import ChTemplate
+
 class StatementType(Enum):
     DIRECTIVE = 0
     CMD = 1
@@ -56,11 +58,17 @@ class DirectiveOpcode(Enum):
     IF = 0x00000005
     STATEMENT_BUF_PUSH = 0x00000006
     STATEMENT_BUF_POP = 0x00000007
+    GET_TLM_VAL = 0x00000008
+    GET_TLM_TIME = 0x00000009
+    GET_PRM_VAL = 0x0000000a
+    EQ_U64_U64 = 0x0000000b
 
 @dataclass
 class BytecodeParseContext:
     goto_tags: map[str, int] = field(default_factory=dict)
     """a map of tag name with tag statement index"""
-    parsed_types: map[str, type[BaseType]] = field(default_factory=dict)
+    types: map[str, type[BaseType]] = field(default_factory=dict)
     """a map of name to all parsed types available in the dictionary"""
+    channels: map[str, ChTemplate] = field(default_factory=dict)
+    """a map of name to ChTemplate object for all tlm channels"""
 

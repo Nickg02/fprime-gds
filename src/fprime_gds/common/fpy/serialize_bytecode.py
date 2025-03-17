@@ -18,6 +18,7 @@ from fprime_gds.common.fpy.types import (
     BytecodeParseContext,
 )
 from fprime_gds.common.loaders.cmd_json_loader import CmdJsonLoader
+from fprime_gds.common.loaders.ch_json_loader import ChJsonLoader
 from fprime_gds.common.loaders.json_loader import PRIMITIVE_TYPE_MAP
 from fprime.common.models.serialize.array_type import ArrayType
 from fprime.common.models.serialize.bool_type import BoolType
@@ -45,6 +46,10 @@ def get_type_obj_for(type: str) -> type[ValueType]:
         return U32Type
     elif type == "FwSizeStoreType":
         return U16Type
+    elif type == "FwChanIdType":
+        return U32Type
+    elif type == "FwPrmIdType":
+        return U32Type
 
     raise RuntimeError("Unknown FPrime type alias " + str(type))
 
@@ -130,9 +135,7 @@ def arbitrary_type_from_json(js, ctx: BytecodeParseContext):
         return StringType.construct_type(f"String", None)(js["value"])
 
     # try first checking parsed_types, then check primitive types
-    type_class = ctx.parsed_types.get(
-        type_name, PRIMITIVE_TYPE_MAP.get(type_name, None)
-    )
+    type_class = ctx.types.get(type_name, PRIMITIVE_TYPE_MAP.get(type_name, None))
     if type_class is None:
         raise RuntimeError("Unknown type " + str(type_name))
 
@@ -148,6 +151,21 @@ def goto_tag_or_idx_from_json(js, ctx: BytecodeParseContext):
 
     # otherwise it is a statement index
     return U32Type(js)
+
+
+def tlm_chan_id_from_json(js, ctx: BytecodeParseContext):
+    if isinstance(js, str):
+        if js not in ctx.channels:
+            raise RuntimeError("Unknown telemetry channel " + str(js))
+        return get_type_obj_for("FwChanIdType")(ctx.channels[js].id)
+    elif isinstance(js, int):
+        matching = [tmp for tmp in ctx.channels.keys() if tmp.id == js]
+        if len(matching) != 1:
+            if len(matching) == 0:
+                raise RuntimeError("Unknown telemetry channel id " + str(js))
+            raise RuntimeError("Multiple matches for telemetry channel id " + str(js))
+        matching = matching[0]
+        return get_type_obj_for("FwChanIdType")(matching.id)
 
 
 directives: list[StatementTemplate] = [
@@ -192,6 +210,30 @@ directives: list[StatementTemplate] = [
         DirectiveOpcode.STATEMENT_BUF_POP.value,
         "STATEMENT_BUF_POP",
         [U8Type, get_type_obj_for("FwOpcodeType")],
+    ),
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.GET_TLM_VAL.value,
+        "GET_TLM_VAL",
+        [tlm_chan_id_from_json, U8Type],
+    ),
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.GET_TLM_TIME.value,
+        "GET_TLM_TIME",
+        [tlm_chan_id_from_json, U8Type],
+    ),
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.GET_PRM_VAL.value,
+        "GET_PRM_VAL",
+        [get_type_obj_for("FwPrmIdType"), U8Type],
+    ),
+    StatementTemplate(
+        StatementType.DIRECTIVE,
+        DirectiveOpcode.EQ_U64_U64.value,
+        "EQ_U64_U64",
+        [U8Type, U8Type, U8Type],
     ),
 ]
 
@@ -251,8 +293,14 @@ def serialize_bytecode(input: Path, dictionary: Path, output: Path = None):
 
     stmts = []
 
+    tlm_json_loader = ChJsonLoader(str(dictionary))
+    (cmd_id_dict, cmd_name_dict, versions) = tlm_json_loader.construct_dicts(
+        str(dictionary)
+    )
+
     context = BytecodeParseContext()
-    context.parsed_types = cmd_json_dict_loader.parsed_types
+    context.types = cmd_json_dict_loader.parsed_types
+    context.channels = cmd_name_dict
 
     input_lines = input.read_text().splitlines()
     input_lines = [line.strip() for line in input_lines]
