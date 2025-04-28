@@ -1,0 +1,12 @@
+Ref.cmdDisp.CMD_NO_OP()
+
+def new_fun(arg, arg):
+    Ref.cmdDisp.CMD_NO_OP()
+
+    if Ref.cmdDisp.cmdsDispatched > 50:
+        Ref.cmdDisp.CMD_NO_OP_STRING("hello world")
+
+    var = Ref.cmdDisp.PARAM_1
+
+    
+
