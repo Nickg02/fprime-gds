@@ -4,7 +4,7 @@ from pathlib import Path
 import time
 from fprime.common.models.serialize.time_type import TimeType
 from fprime_gds.common.data_types.ch_data import ChData
-from fprime_gds.common.fpy.serialize_bytecode import serialize_bytecode
+from fprime_gds.common.fpy.serialize_bytecode import serialize_bytecode, text_to_statements
 from fprime_gds.common.testing_fw.api import IntegrationTestAPI
 import fprime_gds.common.logger.test_logger
 
@@ -18,9 +18,9 @@ def compile_seq(fprime_test_api, seq: str) -> Path:
         input_path = Path(fp.name)
         output_path = input_path.with_suffix(".bin")
 
-    serialize_bytecode(
-        input_path, fprime_test_api.pipeline.dictionary_path, output_path
-    )
+    serialize_bytecode(text_to_statements(
+        input_path, fprime_test_api.pipeline.dictionary_path
+    ), output_path)
     return output_path
 
 
@@ -251,7 +251,7 @@ def test_local_var_set_bad_type(fprime_test_api: IntegrationTestAPI):
 
 def test_get_tlm(fprime_test_api: IntegrationTestAPI):
     seq = """
-    GET_TLM 0, 1, "Ref.fpySeq.StatementsDispatched"
+    GET_TLM 0, 1, "Ref.cmdSeq.StatementsDispatched"
     """
 
     assert_compile_succeeds(fprime_test_api, seq)
@@ -259,7 +259,7 @@ def test_get_tlm(fprime_test_api: IntegrationTestAPI):
 
 def test_get_tlm_bad_chan(fprime_test_api: IntegrationTestAPI):
     seq = """
-    GET_TLM 0, 1, "Ref.fpySeq.RUN"
+    GET_TLM 0, 1, "Ref.cmdSeq.RUN"
     """
 
     assert_compile_fails(fprime_test_api, seq)
@@ -267,7 +267,7 @@ def test_get_tlm_bad_chan(fprime_test_api: IntegrationTestAPI):
 
 def test_get_tlm_bad_idx(fprime_test_api: IntegrationTestAPI):
     seq = """
-    GET_TLM 0, 255, "Ref.fpySeq.StatementsDispatched"
+    GET_TLM 0, 255, "Ref.cmdSeq.StatementsDispatched"
     """
 
     assert_compile_succeeds(fprime_test_api, seq)
