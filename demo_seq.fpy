@@ -1,0 +1,15 @@
+val1: I8 = 127
+val2: U8 = 125
+val3: F32 = 127.0
+
+val4: U64 = 1 * 2 + 3 - 4 / 5
+val5: F64 = 2 ** 0.5 + log(4)
+
+FpyDemo.sendBuffComp.PARAMETER3_PRM_SET(val2 + 10)
+
+if val1 == val3:
+    if val2 > val3:
+        print("success")
+        exit(True)
+print("failure")
+exit(False)
