@@ -53,7 +53,7 @@ from fprime_gds.common.fpy.parser import (
     Ast,
     AstAssign,
 )
-from fprime.common.models.serialize.type_base import BaseType as FppType
+from fprime.common.models.serialize.type_base import BaseType as FppValue
 
 MAX_DIRECTIVES_COUNT = 1024
 MAX_DIRECTIVE_SIZE = 2048
@@ -148,12 +148,7 @@ def is_instance_compat(obj, cls):
     return isinstance(obj, cls)
 
 
-# a value of type FppTypeClass is a Python `type` object representing
-# the type of an Fprime value
-FppTypeClass = type[FppType]
-
-
-class NothingType(ABC):
+class NothingValue(ABC):
     """a type which has no valid values in fprime. used to denote
     a function which doesn't return a value"""
 
@@ -162,26 +157,10 @@ class NothingType(ABC):
         return False
 
 
-# the `type` object representing the NothingType class
-NothingTypeClass = type[NothingType]
-
-
-class CompileException(BaseException):
-    def __init__(self, msg, node: Ast):
-        self.msg = msg
-        self.node = node
-        self.stack_trace = "\n".join(traceback.format_stack(limit=8)[:-1])
-
-    def __str__(self):
-        if self.node is not None:
-            return f'{self.stack_trace}\nAt line {self.node.meta.line} "{self.node.node_text}": {self.msg}'
-        return f"{self.stack_trace}\n{self.msg}"
-
-
 @dataclass
 class FpyCallable:
-    return_type: FppTypeClass | NothingTypeClass
-    args: list[tuple[str, FppTypeClass]]
+    return_type: FpyValueType
+    args: list[tuple[str, FpyValueType]]
 
 
 @dataclass
@@ -195,9 +174,67 @@ class FpyMacro(FpyCallable):
     """a function which instantiates the macro given the argument exprs"""
 
 
+@dataclass
+class FpyTypeCtor(FpyCallable):
+    type: FpyValueType
+
+
+# named variables can be tlm chans, prms, callables, or directly referenced consts (usually enums)
+@dataclass
+class FpyVariable:
+    """a mutable, typed value referenced by an unqualified name"""
+
+    type_ref: AstExpr
+    """the expression denoting the var's type"""
+    declaration: AstAssign
+    """the node where this var is declared"""
+    type: FpyValueType | None = None
+    """the resolved type of the variable. None if type unsure at the moment"""
+    lvar_offset: int | None = None
+    """the offset in the lvar array where this var is stored"""
+
+
+# a scope
+FpyScope = dict[str, "FpyValue"]
+
+
+# the type of an Fpy value
+FpyValueType = Union[
+    type[FppValue],
+    type[NothingValue],
+    type[FpyCallable],
+    type[FpyVariable],
+    type[FpyScope],
+    type[ChTemplate],
+    type[PrmTemplate],
+]
+
+FpyValue = Union[
+    FpyValueType, # types are first class values in Fpy
+    FppValue,
+    NothingValue,
+    FpyCallable, # functions, variables, scopes, tlm chs, and prms are all first class values in Fpy
+    FpyVariable,
+    FpyScope,
+    ChTemplate,
+    PrmTemplate,
+]
+
+class CompileException(BaseException):
+    def __init__(self, msg, node: Ast):
+        self.msg = msg
+        self.node = node
+        self.stack_trace = "\n".join(traceback.format_stack(limit=8)[:-1])
+
+    def __str__(self):
+        if self.node is not None:
+            return f'{self.stack_trace}\nAt line {self.node.meta.line} "{self.node.node_text}": {self.msg}'
+        return f"{self.stack_trace}\n{self.msg}"
+
+
 MACROS: dict[str, FpyMacro] = {
     "sleep": FpyMacro(
-        NothingType,
+        NothingValue,
         [
             (
                 "seconds",
@@ -207,15 +244,10 @@ MACROS: dict[str, FpyMacro] = {
         ],
         WaitRelDirective,
     ),
-    "sleep_until": FpyMacro(NothingType, [("wakeup_time", TimeType)], WaitAbsDirective),
-    "exit": FpyMacro(NothingType, [("success", BoolType)], ExitDirective),
+    "sleep_until": FpyMacro(NothingValue, [("wakeup_time", TimeType)], WaitAbsDirective),
+    "exit": FpyMacro(NothingValue, [("success", BoolType)], ExitDirective),
     "log": FpyMacro(F64Type, [("operand", F64Type)], FloatLogDirective),
 }
-
-
-@dataclass
-class FpyTypeCtor(FpyCallable):
-    type: FppTypeClass
 
 
 @dataclass
@@ -224,7 +256,7 @@ class FieldReference:
 
     parent: "FpyReference"
     """the qualifier"""
-    type: FppTypeClass
+    type: FpyValueType
     """the fprime type of this reference"""
     offset: int
     """the constant offset in the parent type at which to find this field"""
@@ -233,7 +265,7 @@ class FieldReference:
     idx: int = None
     """the index of the field, if applicable"""
 
-    def get_from(self, parent_val: FppType) -> FppType:
+    def get_from(self, parent_val: FppValue) -> FppValue:
         """gets the field value from the parent value"""
         assert isinstance(parent_val, self.type)
         assert self.name is not None or self.idx is not None
@@ -263,25 +295,6 @@ class FieldReference:
 
         assert isinstance(value, self.type), (value, self.type)
         return value
-
-
-# named variables can be tlm chans, prms, callables, or directly referenced consts (usually enums)
-@dataclass
-class FpyVariable:
-    """a mutable, typed value referenced by an unqualified name"""
-
-    type_ref: AstExpr
-    """the expression denoting the var's type"""
-    declaration: AstAssign
-    """the node where this var is declared"""
-    type: FppTypeClass | None = None
-    """the resolved type of the variable. None if type unsure at the moment"""
-    lvar_offset: int | None = None
-    """the offset in the lvar array where this var is stored"""
-
-
-# a scope
-FpyScope = dict[str, "FpyReference"]
 
 
 def create_scope(
@@ -364,44 +377,36 @@ def union_scope(lhs: FpyScope, rhs: FpyScope) -> FpyScope:
 
 
 FpyReference = typing.Union[
-    ChTemplate,
-    PrmTemplate,
-    FppType,
-    FpyCallable,
-    FppTypeClass,
-    FpyVariable,
-    FieldReference,
-    dict,  # dict of FpyReference
 ]
 """some named concept in fpy"""
 
 
-def get_ref_fpp_type_class(ref: FpyReference) -> FppTypeClass:
+def get_ref_fpp_type_class(ref: FpyReference) -> FpyValueType:
     """returns the fprime type of the ref, if it were to be evaluated as an expression"""
     if isinstance(ref, ChTemplate):
         result_type = ref.ch_type_obj
     elif isinstance(ref, PrmTemplate):
         result_type = ref.prm_type_obj
-    elif isinstance(ref, FppType):
+    elif isinstance(ref, FppValue):
         # constant value
         result_type = type(ref)
     elif isinstance(ref, FpyCallable):
         # a reference to a callable isn't a type in and of itself
         # it has a return type but you have to call it (with an AstFuncCall)
         # consider making a separate "reference" type
-        result_type = NothingType
+        result_type = NothingValue
     elif isinstance(ref, FpyVariable):
         result_type = ref.type
     elif isinstance(ref, type):
         # a reference to a type doesn't have a value, and so doesn't have a type,
         # in and of itself. if this were a function call to the type's ctor then
         # it would have a value and thus a type
-        result_type = NothingType
+        result_type = NothingValue
     elif isinstance(ref, FieldReference):
         result_type = ref.type
     elif isinstance(ref, dict):
         # reference to a scope. scopes don't have values
-        result_type = NothingType
+        result_type = NothingValue
     else:
         assert False, ref
 
@@ -439,7 +444,7 @@ class CompileState:
     )
     """reference to its singular resolution"""
 
-    expr_types: dict[AstExpr, FppTypeClass | NothingTypeClass] = field(
+    expr_types: dict[AstExpr, FpyValueType | NothingTypeClass] = field(
         default_factory=dict
     )
     """expr to its fprime type, or nothing type if none"""
@@ -449,10 +454,10 @@ class CompileState:
     )
     """some stack operation to which directive will be emitted for it"""
 
-    type_coercions: dict[AstExpr, FppTypeClass] = field(default_factory=dict)
+    type_coercions: dict[AstExpr, FpyValueType] = field(default_factory=dict)
     """expr to fprime type it must be converted into at runtime"""
 
-    expr_values: dict[AstExpr, FppType | NothingType | None] = field(
+    expr_values: dict[AstExpr, FppValue | NothingValue | None] = field(
         default_factory=dict
     )
     """expr to its fprime value, or nothing if no value, or None if unsure at compile time"""

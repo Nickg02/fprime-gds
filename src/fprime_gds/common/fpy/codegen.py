@@ -21,17 +21,17 @@ from fprime_gds.common.fpy.types import (
     CompileException,
     CompileState,
     FieldReference,
-    FppTypeClass,
-    FpyCallable,
-    FpyCmd,
-    FpyMacro,
+    FpyValueType,
+    FpyCallableType,
+    FpyCmdType,
+    FpyMacroType,
     FpyReference,
     FpyScope,
     FpyTypeCtor,
     FpyVariable,
     InternalIntType,
     InternalStringType,
-    NothingType,
+    NothingValue,
     TopDownVisitor,
     Visitor,
     create_scope,
@@ -182,7 +182,7 @@ class ResolveReferences(TopDownVisitor):
     """for each reference, resolve it in a specific scope based on its
     syntactic position, or fail if could not resolve"""
 
-    def is_type_constant_size(self, type: FppTypeClass) -> bool:
+    def is_type_constant_size(self, type: FpyValueType) -> bool:
         """return true if the type is statically sized"""
         if issubclass(type, StringType):
             return False
@@ -204,7 +204,7 @@ class ResolveReferences(TopDownVisitor):
         """resolve a GetAttr node relative to a given FpyReference. return the
         resolved ref, or None if none could be found. Will raise errors if not found"""
 
-        if isinstance(parent, (FpyCallable, type)):
+        if isinstance(parent, (FpyCallableType, type)):
             # right now we don't support resolving something after a callable/type
             state.err("Invalid syntax", node)
             return None
@@ -221,7 +221,7 @@ class ResolveReferences(TopDownVisitor):
 
         value_type = get_ref_fpp_type_class(parent)
 
-        assert value_type != NothingType
+        assert value_type != NothingValue
 
         if not issubclass(value_type, (SerializableType, TimeType)):
             # trying to do arr.x, but arr is not a struct
@@ -238,7 +238,7 @@ class ResolveReferences(TopDownVisitor):
             )
             return None
 
-        member_list: list[tuple[str, FppTypeClass]] = None
+        member_list: list[tuple[str, FpyValueType]] = None
         if issubclass(value_type, SerializableType):
             member_list = [t[0:2] for t in value_type.MEMBER_LIST]
         else:
@@ -264,7 +264,7 @@ class ResolveReferences(TopDownVisitor):
         """resolve a GetItem node relative to a given FpyReference. return the
         resolved ref, or None if none could be found. Will raise errors if not found"""
 
-        if isinstance(parent, (FpyCallable, type, dict)):
+        if isinstance(parent, (FpyCallableType, type, dict)):
             # right now we don't support resolving index after a callable/type/scope
             state.err("Invalid syntax", node)
             return None
@@ -273,13 +273,13 @@ class ResolveReferences(TopDownVisitor):
 
         value_type = get_ref_fpp_type_class(parent)
 
-        assert value_type != NothingType
+        assert value_type != NothingValue
 
         if not issubclass(value_type, ArrayType):
             # trying to do struct[0], but struct is not an array
             state.err(
                 "Invalid syntax (tried to access indexed member of a non-array type)",
-                node.item,
+                node.index,
             )
             return None
 
@@ -292,13 +292,13 @@ class ResolveReferences(TopDownVisitor):
 
         offset = 0
         for i in range(0, value_type.LENGTH):
-            if i == node.item.value:
+            if i == node.index.value:
                 return FieldReference(parent, value_type.MEMBER_TYPE, offset, idx=i)
             offset += value_type.MEMBER_TYPE.getMaxSize()
 
         state.err(
-            f"Array access out-of-bounds (access: {node.item}, array size: {value_type.LENGTH})",
-            node.item,
+            f"Array access out-of-bounds (access: {node.index}, array size: {value_type.LENGTH})",
+            node.index,
         )
         return None
 
@@ -430,7 +430,7 @@ class PickAndConvertTypes(Visitor):
     """stores in state the fprime type of each expression, or NothingType if the expr had no type"""
 
     def coerce_expr_type(
-        self, node: AstExpr, type: FppTypeClass, state: CompileState
+        self, node: AstExpr, type: FpyValueType, state: CompileState
     ) -> bool:
         node_type = state.expr_types[node]
         if self.can_coerce_type(node_type, type):
@@ -439,7 +439,7 @@ class PickAndConvertTypes(Visitor):
         state.err(f"Expected {type.__name__}, found {node_type.__name__}", node)
         return False
 
-    def can_coerce_type(self, type: FppTypeClass, to_type: FppTypeClass) -> bool:
+    def can_coerce_type(self, type: FpyValueType, to_type: FpyValueType) -> bool:
         if type == to_type:
             return True
         if issubclass(type, IntegerType) and issubclass(to_type, NumericalType):
@@ -455,8 +455,8 @@ class PickAndConvertTypes(Visitor):
         return False
 
     def pick_intermediate_type(
-        self, arg_types: list[FppTypeClass], op: BinaryStackOp | UnaryStackOp
-    ) -> FppTypeClass:
+        self, arg_types: list[FpyValueType], op: BinaryStackOp | UnaryStackOp
+    ) -> FpyValueType:
 
         if op in BOOLEAN_OPERATORS:
             return BoolType
@@ -575,11 +575,11 @@ class PickAndConvertTypes(Visitor):
         if isinstance(node, AstGetItem):
             # the node of the index number has no expression value, it's an arg
             # but only at syntax level
-            state.expr_types[node.item] = NothingType
+            state.expr_types[node.index] = NothingValue
 
     def visit_AstFuncCall(self, node: AstFuncCall, state: CompileState):
         func = state.resolved_references[node.func]
-        assert isinstance(func, FpyCallable)
+        assert isinstance(func, FpyCallableType)
         func_args = func.args
         node_args = node.args if node.args else []
 
@@ -640,7 +640,7 @@ class CalculateConstExprValues(Visitor):
     """for each expr, try to calculate its constant value and store it in a map. stores None if no value could be
     calculated at compile time, and NothingType if the expr had no value"""
 
-    def const_coerce_type(self, from_val: FppType, to_type: FppTypeClass) -> FppType:
+    def const_coerce_type(self, from_val: FppType, to_type: FpyValueType) -> FppType:
         if type(from_val) == to_type:
             return from_val
         if issubclass(to_type, StringType):
@@ -657,8 +657,8 @@ class CalculateConstExprValues(Visitor):
     def visit_AstLiteral(self, node: AstLiteral, state: CompileState):
         literal_type = state.expr_types[node]
 
-        if literal_type == NothingType:
-            value = NothingType()
+        if literal_type == NothingValue:
+            value = NothingValue()
         else:
             try:
                 value = literal_type(node.value)
@@ -674,6 +674,53 @@ class CalculateConstExprValues(Visitor):
                 state.err(f"For type {coerced_type.__name__}: {e}", node)
                 return
         state.expr_values[node] = value
+
+    def visit_AstGetItem(self, node: AstGetItem, state: CompileState):
+        parent_value = state.expr_values.get(node.parent, None)
+        if parent_value is None:
+            # don't have a const parent value
+            return
+        index_value = state.expr_values.get(node.item, None)
+        if index_value is None:
+            # don't have a const index value
+            return
+        assert isinstance(parent_value, ArrayType), type(parent_value)
+        assert isinstance(index_value, IntegerType), type(index_value)
+        assert index_value < type(parent_value).LENGTH, (
+            index_value,
+            type(parent_value).LENGTH,
+        )
+
+        value = parent_value._val[index_value.val]
+
+        coerced_type = state.type_coercions.get(node, None)
+        if coerced_type is not None:
+            try:
+                value = self.const_coerce_type(value, coerced_type)
+            except TypeException as e:
+                state.err(f"For type {coerced_type.__name__}: {e}", node)
+                return
+        state.expr_values[node] = value
+
+    def visit_AstGetAttr(self, node: AstGetAttr, state: CompileState):
+        parent_value = state.expr_values.get(node.parent, None)
+        if parent_value is None:
+            # don't have a const parent value
+            return
+        assert isinstance(parent_value, (SerializableType, TimeType)), type(parent_value)
+        member_names_and_offsets = 
+
+        # value = parent_value._val[index_value.val]
+
+        coerced_type = state.type_coercions.get(node, None)
+        if coerced_type is not None:
+            try:
+                value = self.const_coerce_type(value, coerced_type)
+            except TypeException as e:
+                state.err(f"For type {coerced_type.__name__}: {e}", node)
+                return
+        state.expr_values[node] = value
+
 
     def visit_AstReference(self, node: AstReference, state: CompileState):
         ref = state.resolved_references[node]
@@ -693,18 +740,18 @@ class CalculateConstExprValues(Visitor):
         elif isinstance(ref, FppType):
             # constant value
             expr_value = ref
-        elif isinstance(ref, FpyCallable):
+        elif isinstance(ref, FpyCallableType):
             # a reference to a callable doesn't have a value, you have to actually
             # call the func
-            expr_value = NothingType()
+            expr_value = NothingValue()
         elif isinstance(ref, type):
             # a reference to a type doesn't have a value, and so doesn't have a type,
             # in and of itself. if this were a function call to the type's ctor then
             # it would have a value
-            expr_value = NothingType()
+            expr_value = NothingValue()
         elif isinstance(ref, dict):
             # a ref to a scope doesn't have a value
-            expr_value = NothingType()
+            expr_value = NothingValue()
         else:
             assert False, ref
 
@@ -726,7 +773,7 @@ class CalculateConstExprValues(Visitor):
 
     def visit_AstFuncCall(self, node: AstFuncCall, state: CompileState):
         func = state.resolved_references[node.func]
-        assert isinstance(func, FpyCallable)
+        assert isinstance(func, FpyCallableType)
         # gather arg values
         arg_values = [
             state.expr_values[e] for e in (node.args if node.args is not None else [])
@@ -801,7 +848,7 @@ class GenerateConstExprDirectives(Visitor):
             # no const value
             return
 
-        if isinstance(expr_value, NothingType):
+        if isinstance(expr_value, NothingValue):
             # nothing type has no value
             state.directives[node] = []
             return
@@ -818,7 +865,7 @@ class GenerateExprMacrosAndCmds(Visitor):
     generate directives to calculate the value and put it in its register. for each command
     or macro, generate directives for calling them with appropriate arg values"""
 
-    def get_64_bit_type(self, type: FppTypeClass) -> FppTypeClass:
+    def get_64_bit_type(self, type: FpyValueType) -> FpyValueType:
         assert type in SPECIFIC_NUMERIC_TYPES, type
         return (
             I64Type
@@ -827,7 +874,7 @@ class GenerateExprMacrosAndCmds(Visitor):
         )
 
     def truncate_from_64_bits(
-        self, from_type: FppTypeClass, new_size: int
+        self, from_type: FpyValueType, new_size: int
     ) -> list[Directive]:
 
         assert new_size in (1, 2, 4, 8), new_size
@@ -852,7 +899,7 @@ class GenerateExprMacrosAndCmds(Visitor):
 
         return [IntegerTruncate64To32Directive()]
 
-    def extend_to_64_bits(self, type: FppTypeClass) -> list[Directive]:
+    def extend_to_64_bits(self, type: FpyValueType) -> list[Directive]:
         if type.getMaxSize() == 8:
             # already 8 bytes
             return []
@@ -881,7 +928,7 @@ class GenerateExprMacrosAndCmds(Visitor):
                 return [IntegerZeroExtend32To64Directive()]
 
     def convert_type(
-        self, from_type: FppTypeClass, to_type: FppTypeClass
+        self, from_type: FpyValueType, to_type: FpyValueType
     ) -> list[Directive]:
         if from_type == to_type:
             return []
@@ -938,7 +985,7 @@ class GenerateExprMacrosAndCmds(Visitor):
         # size at a certain offset
 
         directives = parent_dirs.copy()
-        
+
         # push the index (must be U64) to the stack
         index_dirs = state.directives[node.item]
         directives.append(index_dirs)
@@ -949,10 +996,12 @@ class GenerateExprMacrosAndCmds(Visitor):
         directives.append(IntegerTruncate64To16Directive())
 
         # okay now we have the offset on the stack
-        
+
         # get the member from the stack at this offset, discard the rest of
         # the parent
-        directives.append(GetMemberDirective(parent_type.getMaxSize(), expr_type.getMaxSize()))
+        directives.append(
+            GetMemberDirective(parent_type.getMaxSize(), expr_type.getMaxSize())
+        )
 
         # now convert the type if necessary
         converted_type = state.type_coercions.get(node, None)
@@ -960,7 +1009,6 @@ class GenerateExprMacrosAndCmds(Visitor):
             directives.extend(self.convert_type(expr_type, converted_type))
 
         state.directives[node] = directives
-
 
     def visit_AstGetAttr(self, node: AstGetAttr, state: CompileState):
         if node in state.directives:
@@ -975,7 +1023,7 @@ class GenerateExprMacrosAndCmds(Visitor):
         # size at a certain offset
 
         directives = parent_dirs.copy()
-        
+
         # find out the offset of this attribute in the parent
         offset = state.attribute_offsets[node]
 
@@ -984,7 +1032,9 @@ class GenerateExprMacrosAndCmds(Visitor):
 
         # get the member from the stack at this offset, discard the rest of
         # the parent
-        directives.append(GetMemberDirective(parent_type.getMaxSize(), expr_type.getMaxSize()))
+        directives.append(
+            GetMemberDirective(parent_type.getMaxSize(), expr_type.getMaxSize())
+        )
 
         # now convert the type if necessary
         converted_type = state.type_coercions.get(node, None)
@@ -1068,7 +1118,7 @@ class GenerateExprMacrosAndCmds(Visitor):
         if len(dirs) > 0:
             # already know how to put this on the stack
             return
-        if isinstance(func, FpyCmd):
+        if isinstance(func, FpyCmdType):
             const_args = not any(
                 state.expr_values[arg_node] is None for arg_node in node_args
             )
@@ -1095,7 +1145,7 @@ class GenerateExprMacrosAndCmds(Visitor):
                 # now that all args are pushed to the stack, pop them and opcode off the stack
                 # as a command
                 dirs.append(StackCmdDirective(arg_byte_count))
-        elif isinstance(func, FpyMacro):
+        elif isinstance(func, FpyMacroType):
             # put all arg values on stack
             for arg_node in node_args:
                 node_dirs = state.directives[arg_node]
@@ -1356,7 +1406,7 @@ def get_base_compile_state(dictionary: str) -> CompileState:
     )
     # the type name dict is a mapping of a fully qualified name to an fprime type
     # here we put into it all types found while parsing all cmds, params and tlm channels
-    type_name_dict: dict[str, FppTypeClass] = cmd_json_dict_loader.parsed_types
+    type_name_dict: dict[str, FpyValueType] = cmd_json_dict_loader.parsed_types
     type_name_dict.update(ch_json_dict_loader.parsed_types)
     type_name_dict.update(prm_json_dict_loader.parsed_types)
     type_name_dict.update(event_json_dict_loader.parsed_types)
@@ -1380,7 +1430,7 @@ def get_base_compile_state(dictionary: str) -> CompileState:
     # note no string type at the moment
 
     cmd_response_type = type_name_dict["Fw.CmdResponse"]
-    callable_name_dict: dict[str, FpyCallable] = {}
+    callable_name_dict: dict[str, FpyCallableType] = {}
     # add all cmds to the callable dict
     for name, cmd in cmd_name_dict.items():
         cmd: CmdTemplate
@@ -1388,7 +1438,7 @@ def get_base_compile_state(dictionary: str) -> CompileState:
         for arg_name, _, arg_type in cmd.arguments:
             args.append((arg_name, arg_type))
         # cmds are thought of as callables with a Fw.CmdResponse return value
-        callable_name_dict[name] = FpyCmd(cmd_response_type, args, cmd)
+        callable_name_dict[name] = FpyCmdType(cmd_response_type, args, cmd)
 
     # for each type in the dict, if it has a constructor, create an FpyTypeCtor
     # object to track the constructor and put it in the callable name dict
