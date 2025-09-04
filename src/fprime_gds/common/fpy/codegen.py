@@ -58,6 +58,7 @@ from fprime_gds.common.fpy.bytecode.directives import (
     ConstCmdDirective,
     FloatMultiplyDirective,
     FloatTruncateDirective,
+    GetMemberDirective,
     IntMultiplyDirective,
     MemCompareDirective,
     NoOpDirective,
@@ -70,7 +71,7 @@ from fprime_gds.common.fpy.bytecode.directives import (
     IntegerSignedExtend32To64Directive,
     IntegerSignedExtend8To64Directive,
     StackCmdDirective,
-    StorePrmDirective,
+    PushPrmDirective,
     IntegerZeroExtend16To64Directive,
     IntegerZeroExtend32To64Directive,
     IntegerZeroExtend8To64Directive,
@@ -78,7 +79,7 @@ from fprime_gds.common.fpy.bytecode.directives import (
     FloatExtendDirective,
     ExitDirective,
     LoadDirective,
-    StoreTlmValDirective,
+    PushTlmValDirective,
     GotoDirective,
     IfDirective,
     NotDirective,
@@ -924,60 +925,68 @@ class GenerateExprMacrosAndCmds(Visitor):
         dirs.extend(self.truncate_from_64_bits(to_64_bit, to_type.getMaxSize()))
         return dirs
 
-    def visit_AstReference(self, node: AstReference, state: CompileState):
+    def visit_AstGetItem(self, node: AstGetItem, state: CompileState):
         if node in state.directives:
             # already know how to put it on stack, or it is impossible
             return
 
         expr_type = state.expr_types[node]
-        ref = state.resolved_references[node]
+        parent_type = state.expr_types[node.parent]
+        parent_dirs = state.directives[node.parent]
+        # these are the dirs to put the parent on the stack
+        # we want to put it on the stack and then grab a certain
+        # size at a certain offset
 
-        directives = []
+        directives = parent_dirs.copy()
+        
+        # push the index (must be U64) to the stack
+        index_dirs = state.directives[node.item]
+        directives.append(index_dirs)
+        # multiply the index by the member type size
+        directives.append(PushValDirective(U64Type(expr_type.getMaxSize())))
+        directives.append(IntMultiplyDirective())
+        # cut it down to 16 bits
+        directives.append(IntegerTruncate64To16Directive())
 
-        # does not have a constant compile time value
+        # okay now we have the offset on the stack
+        
+        # get the member from the stack at this offset, discard the rest of
+        # the parent
+        directives.append(GetMemberDirective(parent_type.getMaxSize(), expr_type.getMaxSize()))
 
-        # first, put it in an lvar. then load it from the lvar onto stack
+        # now convert the type if necessary
+        converted_type = state.type_coercions.get(node, None)
+        if converted_type is not None:
+            directives.extend(self.convert_type(expr_type, converted_type))
 
-        # the offset of the field in the parent type
-        offset_in_parent_val = 0
-        # the offset of the lvar the parent type is stored in
-        offset_in_lvar_array = 0
+        state.directives[node] = directives
 
-        base_ref = ref
 
-        # if it's a field ref, find the parent and the offset in the parent
-        while isinstance(base_ref, FieldReference):
-            offset_in_parent_val += base_ref.offset
-            base_ref = base_ref.parent
+    def visit_AstGetAttr(self, node: AstGetAttr, state: CompileState):
+        if node in state.directives:
+            # already know how to put it on stack, or it is impossible
+            return
 
-        if isinstance(base_ref, ChTemplate):
-            # put it in an lvar
-            offset_in_lvar_array = state.lvar_array_size_bytes
-            state.lvar_array_size_bytes += base_ref.get_type_obj().getMaxSize()
-            directives.append(
-                StoreTlmValDirective(base_ref.get_id(), offset_in_lvar_array)
-            )
-        elif isinstance(base_ref, PrmTemplate):
-            # put it in an lvar
-            offset_in_lvar_array = state.lvar_array_size_bytes
-            state.lvar_array_size_bytes += base_ref.get_type_obj().getMaxSize()
-            directives.append(
-                StorePrmDirective(base_ref.get_id(), offset_in_lvar_array)
-            )
-        elif isinstance(base_ref, FpyVariable):
-            # already should be in an lvar
-            offset_in_lvar_array = base_ref.lvar_offset
-        else:
-            assert (
-                False
-            ), base_ref  # ref should either be impossible to put on stack or should have a compile time val
+        expr_type = state.expr_types[node]
+        parent_type = state.expr_types[node.parent]
+        parent_dirs = state.directives[node.parent]
+        # these are the dirs to put the parent on the stack
+        # we want to put it on the stack and then grab a certain
+        # size at a certain offset
 
-        # load from the lvar
-        directives.append(
-            LoadDirective(
-                offset_in_lvar_array + offset_in_parent_val, expr_type.getMaxSize()
-            )
-        )
+        directives = parent_dirs.copy()
+        
+        # find out the offset of this attribute in the parent
+        offset = state.attribute_offsets[node]
+
+        # push the offset to the stack
+        directives.append(PushValDirective(U16Type(offset).serialize()))
+
+        # get the member from the stack at this offset, discard the rest of
+        # the parent
+        directives.append(GetMemberDirective(parent_type.getMaxSize(), expr_type.getMaxSize()))
+
+        # now convert the type if necessary
         converted_type = state.type_coercions.get(node, None)
         if converted_type is not None:
             directives.extend(self.convert_type(expr_type, converted_type))

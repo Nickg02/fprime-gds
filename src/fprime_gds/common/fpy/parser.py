@@ -76,19 +76,19 @@ AstLiteral = Union[AstString, AstNumber, AstBoolean]
 
 @dataclass
 class AstGetAttr(Ast):
-    parent: "AstReference"
+    parent: "AstExpr"
     attr: str
 
 
 @dataclass
 class AstGetItem(Ast):
-    parent: "AstReference"
-    item: AstNumber
+    parent: "AstExpr"
+    item: AstExpr
 
 
 @dataclass
 class AstFuncCall(Ast):
-    func: "AstReference"
+    func: "AstExpr"
     args: list["AstExpr"] | None
 
 
@@ -111,16 +111,16 @@ class AstUnaryOp(Ast):
 
 AstOp = Union[AstBinaryOp, AstUnaryOp]
 
-AstReference = Union[AstGetAttr, AstGetItem, AstVar]
+AstAtomExpr = Union[AstGetAttr, AstGetItem, AstFuncCall]
 AstExpr = Union[
-    AstFuncCall, AstLiteral, AstReference, AstOp
+    AstVar, AstLiteral, AstAtomExpr, AstOp
 ]
 
 
 @dataclass
 class AstAssign(Ast):
     variable: AstVar
-    var_type: AstReference | None
+    var_type: AstExpr | None
     value: AstExpr
 
 

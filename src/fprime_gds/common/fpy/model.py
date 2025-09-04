@@ -17,6 +17,7 @@ from fprime_gds.common.fpy.bytecode.directives import (
     FloatModuloDirective,
     FloatMultiplyDirective,
     FloatSubtractDirective,
+    GetMemberDirective,
     GotoDirective,
     MemCompareDirective,
     SignedIntDivideDirective,
@@ -26,8 +27,8 @@ from fprime_gds.common.fpy.bytecode.directives import (
     FloatLogDirective,
     DiscardDirective,
     StackCmdDirective,
-    StorePrmDirective,
-    StoreTlmValDirective,
+    PushPrmDirective,
+    PushTlmValDirective,
     IfDirective,
     IntAddDirective,
     IntEqualDirective,
@@ -354,7 +355,7 @@ class FpySequencerModel:
         if not conditional:
             self.next_dir_idx = dir.false_goto_dir_index
 
-    def handle_store_tlm_val(self, dir: StoreTlmValDirective):
+    def handle_push_tlm_val(self, dir: PushTlmValDirective):
         whole_value: bytearray = self.tlm_db.get(dir.chan_id, None)
         if whole_value is None:
             return DirectiveErrorCode.TLM_NOT_FOUND
@@ -365,14 +366,9 @@ class FpySequencerModel:
         ):
             return DirectiveErrorCode.STACK_OVERFLOW
 
-        self.stack[
-            self.stack_frame_start
-            + dir.lvar_offset : (
-                self.stack_frame_start + dir.lvar_offset + len(whole_value)
-            )
-        ] = whole_value
+        self.push(whole_value)
 
-    def handle_store_prm(self, dir: StorePrmDirective):
+    def handle_push_prm(self, dir: PushPrmDirective):
         whole_value: bytearray = self.prm_db.get(dir.prm_id, None)
         if whole_value is None:
             return DirectiveErrorCode.PRM_NOT_FOUND
@@ -383,12 +379,7 @@ class FpySequencerModel:
         ):
             return DirectiveErrorCode.STACK_OVERFLOW
 
-        self.stack[
-            self.stack_frame_start
-            + dir.lvar_offset : (
-                self.stack_frame_start + dir.lvar_offset + len(whole_value)
-            )
-        ] = whole_value
+        self.push(whole_value)
 
     def handle_or(self, dir: OrDirective):
         if len(self.stack) < 2:
@@ -795,5 +786,20 @@ class FpySequencerModel:
         
         rhs = self.pop(type=bytes, size=dir.size)
         lhs = self.pop(type=bytes, size=dir.size)
-        print(rhs, lhs)
         self.push(rhs == lhs)
+
+    def handle_get_member(self, dir: GetMemberDirective):
+        if len(self.stack) < dir.parent_size:
+            return DirectiveErrorCode.STACK_UNDERFLOW
+
+        if dir.member_size > dir.parent_size:
+            return DirectiveErrorCode.INVALID_ARGUMENT
+
+        offset = self.pop(type=int, signed=False, size=2)
+        if offset + dir.member_size > dir.parent_size:
+            return DirectiveErrorCode.STACK_UNDERFLOW
+
+        parent = self.pop(type=bytes, size=dir.parent_size)
+        member = parent[offset:(offset + dir.member_size)]
+
+        self.push(member)
