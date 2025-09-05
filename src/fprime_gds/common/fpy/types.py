@@ -53,7 +53,7 @@ from fprime_gds.common.fpy.parser import (
     Ast,
     AstAssign,
 )
-from fprime.common.models.serialize.type_base import BaseType as FppValue
+from fprime.common.models.serialize.type_base import BaseType as FprimeValue
 
 MAX_DIRECTIVES_COUNT = 1024
 MAX_DIRECTIVE_SIZE = 2048
@@ -148,35 +148,88 @@ def is_instance_compat(obj, cls):
     return isinstance(obj, cls)
 
 
-class NothingValue(ABC):
-    """a type which has no valid values in fprime. used to denote
-    a function which doesn't return a value"""
+@dataclass
+class FpyValue:
+    """the base type for all fpy values. if it is a subclass of this,
+    it is the valid result of evaluating an expression in fpy"""
 
-    @classmethod
-    def __subclasscheck__(cls, subclass):
-        return False
+    type: FpyType
+    value: typing.Any
+
+TypeFwdRef = None
+
+
+class FpyType(FpyValue):
+
+    def __init__(self, base: FpyType, name: str):
+        super().__init__(TypeFwdRef, None)
+        self.base = base
+        self.name = name
+
+    def check_subtype(self, other: FpyType):
+        if self is Any:
+            # all types are subtypes of any
+            return True
+
+        # the other type is a subtype iff
+        # this type is the same type as the other type,
+        # or one of other's parents is this type
+        while other is not Any and other is not self:
+            other = other.base
+
+        return other is not Any
+
+    def construct(self, *args):
+        return FpyValue(self)
+
+
+Type = FpyType(None, "Type")
+# Type's base type is itself
+Type.base = Type
+# Type is the only type whose type is itself
+Type.type = Type
+# now update the fwd ref
+TypeFwdRef = Type
+
+Any = FpyType(None, "Any")
+# Any's base type is itself
+Any.base = Any
+
+UnitType = FpyType(Any, "Unit")
+# the one valid value of the unit type
+Unit = UnitType.construct()
+
+Callable = FpyType(Any, "Callable")
+
+# TODO macros shouldn't be callables, they are a separate thing which need their
+# own compiler pass
+Macro = FpyType(Callable, "Macro")
+
+Command = FpyType(Callable, "Command")
+
+
+class FpyCallableType(FpyType):
+    """a type representing an object which can be called with () syntax"""
+
+    def construct(
+        self, return_type: FpyType, args: list[tuple[str, FpyType]], action: typing.Any
+    ):
+        return FpyValue(self, (return_type, args, action))
 
 
 @dataclass
-class FpyCallable:
-    return_type: FpyValueType
-    args: list[tuple[str, FpyValueType]]
-
-
-@dataclass
-class FpyCmd(FpyCallable):
+class FpyCmd(FpyCallableType):
     cmd: CmdTemplate
 
 
 @dataclass
-class FpyMacro(FpyCallable):
+class FpyMacro(FpyCallableType):
     dir: type[Directive]
-    """a function which instantiates the macro given the argument exprs"""
 
 
 @dataclass
-class FpyTypeCtor(FpyCallable):
-    type: FpyValueType
+class FpyTypeCtor(FpyCallableType):
+    type: FpyType
 
 
 # named variables can be tlm chans, prms, callables, or directly referenced consts (usually enums)
@@ -184,7 +237,7 @@ class FpyTypeCtor(FpyCallable):
 class FpyVariable:
     """a mutable, typed value referenced by an unqualified name"""
 
-    type_ref: AstExpr
+    type_expr: AstExpr
     """the expression denoting the var's type"""
     declaration: AstAssign
     """the node where this var is declared"""
@@ -197,28 +250,6 @@ class FpyVariable:
 # a scope
 FpyScope = dict[str, "FpyValue"]
 
-
-# the type of an Fpy value
-FpyValueType = Union[
-    type[FppValue],
-    type[NothingValue],
-    type[FpyCallable],
-    type[FpyVariable],
-    type[FpyScope],
-    type[ChTemplate],
-    type[PrmTemplate],
-]
-
-FpyValue = Union[
-    FpyValueType, # types are first class values in Fpy
-    FppValue,
-    NothingValue,
-    FpyCallable, # functions, variables, scopes, tlm chs, and prms are all first class values in Fpy
-    FpyVariable,
-    FpyScope,
-    ChTemplate,
-    PrmTemplate,
-]
 
 class CompileException(BaseException):
     def __init__(self, msg, node: Ast):
@@ -234,7 +265,7 @@ class CompileException(BaseException):
 
 MACROS: dict[str, FpyMacro] = {
     "sleep": FpyMacro(
-        NothingValue,
+        UnitType,
         [
             (
                 "seconds",
@@ -244,8 +275,8 @@ MACROS: dict[str, FpyMacro] = {
         ],
         WaitRelDirective,
     ),
-    "sleep_until": FpyMacro(NothingValue, [("wakeup_time", TimeType)], WaitAbsDirective),
-    "exit": FpyMacro(NothingValue, [("success", BoolType)], ExitDirective),
+    "sleep_until": FpyMacro(UnitType, [("wakeup_time", TimeType)], WaitAbsDirective),
+    "exit": FpyMacro(UnitType, [("success", BoolType)], ExitDirective),
     "log": FpyMacro(F64Type, [("operand", F64Type)], FloatLogDirective),
 }
 
@@ -298,7 +329,7 @@ class FieldReference:
 
 
 def create_scope(
-    references: dict[str, "FpyReference"],
+    references: dict[str, FpyValue],
 ) -> FpyScope:
     """from a flat dict of strs to references, creates a hierarchical, scoped
     dict. no two leaf nodes may have the same name"""
@@ -376,41 +407,28 @@ def union_scope(lhs: FpyScope, rhs: FpyScope) -> FpyScope:
     return new
 
 
-FpyReference = typing.Union[
-]
-"""some named concept in fpy"""
+def get_type_of_value(val: FpyValue) -> FpyValueType:
+    """returns the type of the value, if it were to be evaluated as an expression"""
 
-
-def get_ref_fpp_type_class(ref: FpyReference) -> FpyValueType:
-    """returns the fprime type of the ref, if it were to be evaluated as an expression"""
-    if isinstance(ref, ChTemplate):
-        result_type = ref.ch_type_obj
-    elif isinstance(ref, PrmTemplate):
-        result_type = ref.prm_type_obj
-    elif isinstance(ref, FppValue):
+    if isinstance(val, type):
+        # type of a type is "type"? idk we really shouldn't get here...
+        assert False, val
+        return type
+    elif isinstance(val, FppValue):
         # constant value
-        result_type = type(ref)
-    elif isinstance(ref, FpyCallable):
-        # a reference to a callable isn't a type in and of itself
-        # it has a return type but you have to call it (with an AstFuncCall)
-        # consider making a separate "reference" type
-        result_type = NothingValue
-    elif isinstance(ref, FpyVariable):
-        result_type = ref.type
-    elif isinstance(ref, type):
-        # a reference to a type doesn't have a value, and so doesn't have a type,
-        # in and of itself. if this were a function call to the type's ctor then
-        # it would have a value and thus a type
-        result_type = NothingValue
-    elif isinstance(ref, FieldReference):
-        result_type = ref.type
-    elif isinstance(ref, dict):
-        # reference to a scope. scopes don't have values
-        result_type = NothingValue
-    else:
-        assert False, ref
-
-    return result_type
+        return type(val)
+    elif isinstance(val, UnitValue):
+        return UnitValue
+    elif isinstance(val, FpyCallableType):
+        return type(val)
+    elif isinstance(val, FpyVariable):
+        return val.type
+    elif isinstance(val, dict):
+        return type(val)
+    elif isinstance(val, ChTemplate):
+        return val.ch_type_obj
+    elif isinstance(val, PrmTemplate):
+        return val.prm_type_obj
 
 
 @dataclass
@@ -444,9 +462,7 @@ class CompileState:
     )
     """reference to its singular resolution"""
 
-    expr_types: dict[AstExpr, FpyValueType | NothingTypeClass] = field(
-        default_factory=dict
-    )
+    expr_types: dict[AstExpr, FpyValueType] = field(default_factory=dict)
     """expr to its fprime type, or nothing type if none"""
 
     stack_op_directives: dict[AstOp, type[StackOpDirective]] = field(
@@ -457,10 +473,8 @@ class CompileState:
     type_coercions: dict[AstExpr, FpyValueType] = field(default_factory=dict)
     """expr to fprime type it must be converted into at runtime"""
 
-    expr_values: dict[AstExpr, FppValue | NothingValue | None] = field(
-        default_factory=dict
-    )
-    """expr to its fprime value, or nothing if no value, or None if unsure at compile time"""
+    expr_values: dict[AstExpr, FpyValue] = field(default_factory=dict)
+    """expr to its fpy value"""
 
     attribute_offsets: dict[AstGetAttr, int] = field(default_factory=dict)
 

@@ -21,6 +21,7 @@ from fprime_gds.common.fpy.types import (
     CompileException,
     CompileState,
     FieldReference,
+    FpyCallableType,
     FpyValueType,
     FpyCallableType,
     FpyCmdType,
@@ -31,11 +32,11 @@ from fprime_gds.common.fpy.types import (
     FpyVariable,
     InternalIntType,
     InternalStringType,
-    NothingValue,
+    UnitValue,
     TopDownVisitor,
     Visitor,
     create_scope,
-    get_ref_fpp_type_class,
+    get_type_of_value,
     is_instance_compat,
 )
 
@@ -219,9 +220,9 @@ class ResolveReferences(TopDownVisitor):
 
         # parent is a ch, prm, const, or field
 
-        value_type = get_ref_fpp_type_class(parent)
+        value_type = get_type_of_value(parent)
 
-        assert value_type != NothingValue
+        assert value_type != UnitValue
 
         if not issubclass(value_type, (SerializableType, TimeType)):
             # trying to do arr.x, but arr is not a struct
@@ -271,9 +272,9 @@ class ResolveReferences(TopDownVisitor):
 
         # parent is a ch, prm, const, or field
 
-        value_type = get_ref_fpp_type_class(parent)
+        value_type = get_type_of_value(parent)
 
-        assert value_type != NothingValue
+        assert value_type != UnitValue
 
         if not issubclass(value_type, ArrayType):
             # trying to do struct[0], but struct is not an array
@@ -395,6 +396,28 @@ class ResolveReferences(TopDownVisitor):
             state.err("Unknown variable", node)
             return
 
+
+class CheckAtomExprTypes(Visitor):
+    def visit_AstFuncCall(self, node: AstFuncCall, state:  CompileState):
+        parent_type = state.expr_types[node.func]
+        if not parent_type == FpyCallableType:
+            state.err("Can only call functions")
+            return
+    def visit_AstGetAttr(self, node: AstGetAttr, state: CompileState):
+        parent_type = state.expr_types[node.parent]
+
+        if isinstance(parent_type, FppType):
+            return
+
+        state.err("Can only get item of Fpp values")
+
+    def visit_AstGetItem(self, node: AstGetItem, state: CompileState):
+        parent_type = state.expr_types[node.parent]
+
+        # parent must be an fpp value
+        if not isinstance(parent_type, FppType):
+            state.err("Can only get item of Fpp values")
+            return
 
 class CheckUseBeforeDeclare(Visitor):
 
@@ -571,11 +594,11 @@ class PickAndConvertTypes(Visitor):
 
     def visit_AstReference(self, node: AstReference, state: CompileState):
         ref = state.resolved_references[node]
-        state.expr_types[node] = get_ref_fpp_type_class(ref)
+        state.expr_types[node] = get_type_of_value(ref)
         if isinstance(node, AstGetItem):
             # the node of the index number has no expression value, it's an arg
             # but only at syntax level
-            state.expr_types[node.index] = NothingValue
+            state.expr_types[node.index] = UnitValue
 
     def visit_AstFuncCall(self, node: AstFuncCall, state: CompileState):
         func = state.resolved_references[node.func]
@@ -657,8 +680,8 @@ class CalculateConstExprValues(Visitor):
     def visit_AstLiteral(self, node: AstLiteral, state: CompileState):
         literal_type = state.expr_types[node]
 
-        if literal_type == NothingValue:
-            value = NothingValue()
+        if literal_type == UnitValue:
+            value = UnitValue()
         else:
             try:
                 value = literal_type(node.value)
@@ -708,7 +731,7 @@ class CalculateConstExprValues(Visitor):
             # don't have a const parent value
             return
         assert isinstance(parent_value, (SerializableType, TimeType)), type(parent_value)
-        member_names_and_offsets = 
+        member_names_and_offsets = None
 
         # value = parent_value._val[index_value.val]
 
@@ -743,15 +766,15 @@ class CalculateConstExprValues(Visitor):
         elif isinstance(ref, FpyCallableType):
             # a reference to a callable doesn't have a value, you have to actually
             # call the func
-            expr_value = NothingValue()
+            expr_value = UnitValue()
         elif isinstance(ref, type):
             # a reference to a type doesn't have a value, and so doesn't have a type,
             # in and of itself. if this were a function call to the type's ctor then
             # it would have a value
-            expr_value = NothingValue()
+            expr_value = UnitValue()
         elif isinstance(ref, dict):
             # a ref to a scope doesn't have a value
-            expr_value = NothingValue()
+            expr_value = UnitValue()
         else:
             assert False, ref
 
@@ -848,7 +871,7 @@ class GenerateConstExprDirectives(Visitor):
             # no const value
             return
 
-        if isinstance(expr_value, NothingValue):
+        if isinstance(expr_value, UnitValue):
             # nothing type has no value
             state.directives[node] = []
             return
