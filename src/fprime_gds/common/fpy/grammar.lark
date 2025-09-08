@@ -14,8 +14,9 @@ _expr_stmt: _expr
 
 # assignment
 
-# can currently only assign constant values to vars
-# for some reason if i use _reference here i don't get a None in the optional spot
+# abstract interpretation --take dynamic sem, simplify
+# maybe thinking of going back to different syntax for type references
+
 assign: var [":" _expr] "=" _expr
 
 

@@ -22,6 +22,7 @@ from fprime_gds.common.fpy.types import (
     CompileState,
     FieldReference,
     FpyCallableType,
+    FpyType,
     FpyValueType,
     FpyCallableType,
     FpyCmdType,
@@ -32,6 +33,7 @@ from fprime_gds.common.fpy.types import (
     FpyVariable,
     InternalIntType,
     InternalStringType,
+    Object,
     UnitValue,
     TopDownVisitor,
     Visitor,
@@ -343,7 +345,7 @@ class ResolveReferences(TopDownVisitor):
 
     def visit_AstFuncCall(self, node: AstFuncCall, state: CompileState):
         # function refs must be callables
-        if not self.resolve_ref_in_ns(node.func, state.callables, state):
+        if not self.resolve_ref_in_ns(node.func, state.functions, state):
             state.err("Unknown callable", node.func)
             return
 
@@ -1007,11 +1009,27 @@ class GenerateExprMacrosAndCmds(Visitor):
         # we want to put it on the stack and then grab a certain
         # size at a certain offset
 
+
+        # stack:
+        # 0 parent value (array)
+        # 1 index value (U64)
+        # 2 member type size U64
+        # >
+        # 0 parent value (array)
+        # 1 parent offset U64
+
+        # assert ->
+
+        # TODO directive for assertions somehow
+        # TODO exit takes an error code
+
+        # optimization: leave it in the lvar array
+
         directives = parent_dirs.copy()
 
         # push the index (must be U64) to the stack
         index_dirs = state.directives[node.item]
-        directives.append(index_dirs)
+        directives.extend(index_dirs)
         # multiply the index by the member type size
         directives.append(PushValDirective(U64Type(expr_type.getMaxSize())))
         directives.append(IntMultiplyDirective())
@@ -1439,7 +1457,7 @@ def get_base_compile_state(dictionary: str) -> CompileState:
     )
     # the type name dict is a mapping of a fully qualified name to an fprime type
     # here we put into it all types found while parsing all cmds, params and tlm channels
-    type_name_dict: dict[str, FpyValueType] = cmd_json_dict_loader.parsed_types
+    type_name_dict = cmd_json_dict_loader.parsed_types
     type_name_dict.update(ch_json_dict_loader.parsed_types)
     type_name_dict.update(prm_json_dict_loader.parsed_types)
     type_name_dict.update(event_json_dict_loader.parsed_types)
@@ -1461,6 +1479,9 @@ def get_base_compile_state(dictionary: str) -> CompileState:
         type_name_dict[typ.get_canonical_name()] = typ
     type_name_dict["bool"] = BoolType
     # note no string type at the moment
+
+    # okay now convert all of these Fprime types to Fpy types
+    type_name_dict = {k: FpyType(Object, k,) for k, v in type_name_dict.items()}
 
     cmd_response_type = type_name_dict["Fw.CmdResponse"]
     callable_name_dict: dict[str, FpyCallableType] = {}
@@ -1503,7 +1524,7 @@ def get_base_compile_state(dictionary: str) -> CompileState:
         tlms=create_scope(ch_name_dict),
         prms=create_scope(prm_name_dict),
         types=create_scope(type_name_dict),
-        callables=create_scope(callable_name_dict),
+        functions=create_scope(callable_name_dict),
         consts=create_scope(enum_const_name_dict),
     )
     return state

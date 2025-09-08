@@ -1319,3 +1319,6 @@ var: U32 = 1
 exit(-var == -1)
 """
     assert_run_success(fprime_test_api, seq)
+
+
+# val 

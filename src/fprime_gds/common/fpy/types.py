@@ -154,82 +154,104 @@ class FpyValue:
     it is the valid result of evaluating an expression in fpy"""
 
     type: FpyType
-    value: typing.Any
+
 
 TypeFwdRef = None
 
+ALL_TYPES: dict[str, FpyType] = {}
 
+# types are first class objects in Fpy
 class FpyType(FpyValue):
 
-    def __init__(self, base: FpyType, name: str):
+    def __init__(
+        self,
+        base: FpyType,
+        name: str,
+        members: dict[str, FpyType] = None,
+        element_type: FpyType = None,
+        length: int = None,
+    ):
+        if members is not None:
+            assert element_type is None and length is None, (element_type, length)
+        if element_type is not None:
+            assert length is not None and members is None, (length, members)
         super().__init__(TypeFwdRef, None)
         self.base = base
         self.name = name
+        self.members = members if members is not None else {}
+        ALL_TYPES[name] = self
 
-    def check_subtype(self, other: FpyType):
-        if self is Any:
-            # all types are subtypes of any
+    def is_subtype(self, other: FpyType):
+        if self is Object:
+            # all types are subtypes of object
             return True
 
         # the other type is a subtype iff
         # this type is the same type as the other type,
         # or one of other's parents is this type
-        while other is not Any and other is not self:
+        while other is not Object and other is not self:
             other = other.base
 
-        return other is not Any
+        return other is not Object  # => other is self
 
     def construct(self, *args):
         return FpyValue(self)
 
 
-Type = FpyType(None, "Type")
-# Type's base type is itself
-Type.base = Type
-# Type is the only type whose type is itself
+# object doesn't have a base type, but it is still considered
+# a subtype of itself due to impl of is_subtype
+Object = FpyType(None, "object")
+
+Type = FpyType(Object, "type")
+# the type of a type object is Type (say this 10 times fast)
 Type.type = Type
+Object.type = Type
 # now update the fwd ref
 TypeFwdRef = Type
 
-Any = FpyType(None, "Any")
-# Any's base type is itself
-Any.base = Any
-
-UnitType = FpyType(Any, "Unit")
+UnitType = FpyType(Object, "unit")
 # the one valid value of the unit type
 Unit = UnitType.construct()
 
-Callable = FpyType(Any, "Callable")
+Function = FpyType(Object, "function", {"return_type": Type, "args": Object})
 
-# TODO macros shouldn't be callables, they are a separate thing which need their
-# own compiler pass
-Macro = FpyType(Callable, "Macro")
-
-Command = FpyType(Callable, "Command")
-
-
-class FpyCallableType(FpyType):
-    """a type representing an object which can be called with () syntax"""
-
-    def construct(
-        self, return_type: FpyType, args: list[tuple[str, FpyType]], action: typing.Any
-    ):
-        return FpyValue(self, (return_type, args, action))
-
-
-@dataclass
-class FpyCmd(FpyCallableType):
-    cmd: CmdTemplate
+Number = FpyType(Object, "number")
+Integer = FpyType(Number, "integer")
+I8 = FpyType(Integer, "I8")
+I16 = FpyType(Integer, "I16")
+I32 = FpyType(Integer, "I32")
+I64 = FpyType(Integer, "I64")
+U8 = FpyType(Integer, "U8")
+U16 = FpyType(Integer, "U16")
+U32 = FpyType(Integer, "U32")
+U64 = FpyType(Integer, "U64")
+Float = FpyType(Number, "float")
+F32 = FpyType(Float, "F32")
+F64 = FpyType(Float, "F64")
+Bool = FpyType(Object, "bool")
 
 
-@dataclass
-class FpyMacro(FpyCallableType):
-    dir: type[Directive]
-
-
-@dataclass
-class FpyTypeCtor(FpyCallableType):
-    type: FpyType
+def construct_fpy_type_from_fprime_type(
+    fqn: str, fprime_type: type[FprimeValue]
+) -> FpyType:
+    existing = ALL_TYPES.get(fqn, None)
+    if existing is not None:
+        return existing
+    if issubclass(fprime_type, ArrayType):
+        fpy_type = FpyType(
+            Object,
+            fqn,
+            element_type=fprime_type.MEMBER_TYPE,
+            length=fprime_type.LENGTH
+        )
+    elif issubclass(fprime_type, SerializableType):
+        fpy_type = FpyType(
+            Object,
+            fqn,
+            members
+        )
+    elif fprime_type == TimeType:
+        members = 
 
 
 # named variables can be tlm chans, prms, callables, or directly referenced consts (usually enums)
@@ -263,22 +285,22 @@ class CompileException(BaseException):
         return f"{self.stack_trace}\n{self.msg}"
 
 
-MACROS: dict[str, FpyMacro] = {
-    "sleep": FpyMacro(
-        UnitType,
-        [
-            (
-                "seconds",
-                U32Type,
-            ),
-            ("microseconds", U32Type),
-        ],
-        WaitRelDirective,
-    ),
-    "sleep_until": FpyMacro(UnitType, [("wakeup_time", TimeType)], WaitAbsDirective),
-    "exit": FpyMacro(UnitType, [("success", BoolType)], ExitDirective),
-    "log": FpyMacro(F64Type, [("operand", F64Type)], FloatLogDirective),
-}
+# MACROS: dict[str, FpyMacro] = {
+#     "sleep": FpyMacro(
+#         UnitType,
+#         [
+#             (
+#                 "seconds",
+#                 U32Type,
+#             ),
+#             ("microseconds", U32Type),
+#         ],
+#         WaitRelDirective,
+#     ),
+#     "sleep_until": FpyMacro(UnitType, [("wakeup_time", TimeType)], WaitAbsDirective),
+#     "exit": FpyMacro(UnitType, [("success", BoolType)], ExitDirective),
+#     "log": FpyMacro(F64Type, [("operand", F64Type)], FloatLogDirective),
+# }
 
 
 @dataclass
@@ -407,38 +429,14 @@ def union_scope(lhs: FpyScope, rhs: FpyScope) -> FpyScope:
     return new
 
 
-def get_type_of_value(val: FpyValue) -> FpyValueType:
-    """returns the type of the value, if it were to be evaluated as an expression"""
-
-    if isinstance(val, type):
-        # type of a type is "type"? idk we really shouldn't get here...
-        assert False, val
-        return type
-    elif isinstance(val, FppValue):
-        # constant value
-        return type(val)
-    elif isinstance(val, UnitValue):
-        return UnitValue
-    elif isinstance(val, FpyCallableType):
-        return type(val)
-    elif isinstance(val, FpyVariable):
-        return val.type
-    elif isinstance(val, dict):
-        return type(val)
-    elif isinstance(val, ChTemplate):
-        return val.ch_type_obj
-    elif isinstance(val, PrmTemplate):
-        return val.prm_type_obj
-
-
 @dataclass
 class CompileState:
     """a collection of input, internal and output state variables and maps"""
 
     types: FpyScope
     """a scope whose leaf nodes are subclasses of BaseType"""
-    callables: FpyScope
-    """a scope whose leaf nodes are FpyCallable instances"""
+    functions: FpyScope
+    """a scope whose leaf nodes are FpyFunction instances"""
     tlms: FpyScope
     """a scope whose leaf nodes are ChTemplates"""
     prms: FpyScope
@@ -456,11 +454,6 @@ class CompileState:
             self.tlms,
             union_scope(self.prms, union_scope(self.consts, self.variables)),
         )
-
-    resolved_references: dict[AstReference, FpyReference] = field(
-        default_factory=dict, repr=False
-    )
-    """reference to its singular resolution"""
 
     expr_types: dict[AstExpr, FpyValueType] = field(default_factory=dict)
     """expr to its fprime type, or nothing type if none"""
