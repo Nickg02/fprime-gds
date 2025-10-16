@@ -1,0 +1,11 @@
+allocate 1
+push_val 2
+store 0 1
+load 0 1
+ziext_8_64
+push_val 0 0 0 0 0 0 0 2
+iadd
+push_val 0 0 0 0 0 0 0 3
+iadd
+itrunc_64_8
+store 0 1

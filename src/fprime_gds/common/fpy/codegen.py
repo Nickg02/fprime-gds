@@ -1286,6 +1286,80 @@ class GenerateBodyDirectives(Visitor):
 
         state.directives[node] = dirs
 
+# Optimization Passes
+class ConstantFolding(Visitor):
+    """Perform constant folding on binary operations that have constant inputs
+
+    Args:
+        Visitor (_type_): _description_
+    """
+    def visit_AstBinaryOp(self, node: AstBinaryOp, state: CompileState):
+        # Check if both left-hand side (lhs) and right-hand side (rhs) are constants
+        lhs_value = state.expr_values.get(node.lhs, None)
+        rhs_value = state.expr_values.get(node.rhs, None)
+
+        print(isinstance(node.lhs, AstReference), isinstance(node.rhs, AstLiteral))
+
+        #print(lhs_value, rhs_value)
+        #print(lhs_value.serialize(), rhs_value.serialize())
+        #print(state)
+
+        if lhs_value is not None and rhs_value is not None:
+            # Both sides are constants, evaluate the operation
+            print("constants")
+            #lhs_int = int.from_bytes(lhs_value.serialize(), byteorder='big', signed=False)
+            lhs_int = 0 # lhs_value.val
+            rhs_int = 0 # int.from_bytes(rhs_value.serialize(), byteorder='big', signed=False)
+            try:
+                if node.op == BinaryStackOp.ADD:
+                    folded_value = lhs_int + rhs_int
+                    print("Add operation folding")
+                elif node.op == BinaryStackOp.SUBTRACT:
+                    folded_value = lhs_int - rhs_int
+                    print("Subtract operation folding")
+                elif node.op == BinaryStackOp.MULTIPLY:
+                    folded_value = lhs_int * rhs_int
+                    print("Multiply operation folding")
+                elif node.op == BinaryStackOp.DIVIDE:
+                    folded_value = lhs_int / rhs_int
+                    print("Divide operation folding")
+                else:
+                    # Unsupported operation for constant folding
+                    return
+
+                # (((var + 2) + var1) + 3) = var + var1 + 5
+                # Replace the binary operation node with a constant literal node
+                #folded_node = AstNumber(value=folded_value)
+                #state.expr_values[node] = state.type_coercions[node.lhs]
+                #state.expr_values[node] = InternalIntType(folded_value)
+                #state.replace_node(node, folded_node)
+
+            except Exception as e:
+                state.err(f"Error during binary operation constant folding: {e}", node)
+
+    def visit_AstUnaryOp(self, node: AstUnaryOp, state: CompileState):
+        # Check if the operand is a constant
+        val = state.expr_values.get(node.val, None)
+
+        if val is not None:
+            # Operand is constant, evaluate the operation
+            try:
+                if node.op == UnaryStackOp.NEGATE:
+                    folded_value = -val
+                elif node.op == UnaryStackOp.NOT:
+                    folded_value = not val
+                else:
+                    # Unsupported operation for constant folding
+                    return
+
+                # Replace the unary operation node with a constant literal node
+                folded_node = AstLiteral(value=folded_value)
+                state.expr_values[folded_node] = folded_value
+                #state.replace_node(node, folded_node)
+
+            except Exception as e:
+                state.err(f"Error during unary operation constant folding: {e}", node)
+
 def get_base_compile_state(dictionary: str) -> CompileState:
     """return the initial state of the compiler, based on the given dict path"""
     cmd_json_dict_loader = CmdJsonLoader(dictionary)
@@ -1395,6 +1469,8 @@ def compile(body: AstScopedBody, dictionary: str) -> list[Directive]:
         # okay, now that we're sure we're passing in all the right args to each func,
         # we can calculate values of type ctors etc etc
         CalculateConstExprValues(),
+        # Nick: Now we can do the constant folding before we generate any directives
+        ConstantFolding(),
         # for expressions which have constant values, generate corresponding directives
         # to put the expr on the stack
         GenerateConstExprDirectives(),
