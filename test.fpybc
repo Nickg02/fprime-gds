@@ -1,11 +1,13 @@
 allocate 1
 push_val 2
 store 0 1
-load 0 1
-ziext_8_64
-push_val 0 0 0 0 0 0 0 2
-iadd
-push_val 0 0 0 0 0 0 0 3
-iadd
-itrunc_64_8
+push_val 5
+store 0 1
+push_val 3
+store 0 1
+push_val 10
+store 0 1
+push_val 2
+store 0 1
+push_val 19
 store 0 1

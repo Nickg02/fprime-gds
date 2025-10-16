@@ -480,6 +480,8 @@ class PickAndConvertTypes(Visitor):
 
         float = any(issubclass(t, FloatType) for t in arg_types)
         unsigned = any(t in UNSIGNED_INTEGER_TYPES for t in arg_types)
+        # are all the arguments internal ints (which have arbitrary precision?)
+        arbitrary_precision = all(isinstance(t, InternalIntType) for t in arg_types)
 
         if float:
             # at least one arg is a float
@@ -488,6 +490,10 @@ class PickAndConvertTypes(Visitor):
         if unsigned:
             # at least one arg is unsigned
             return U64Type
+
+        if arbitrary_precision:
+            # all arguments are arb precision
+            return InternalIntType
 
         return I64Type
 
@@ -719,7 +725,7 @@ class CalculateConstExprValues(Visitor):
             try:
                 expr_value = self.const_coerce_type(expr_value, coerced_type)
             except TypeException as e:
-                state.err(f"For type {expr_type.__name__}: {e}", node)
+                state.err(f"For type {coerced_type.__name__}: {e}", node)
                 return
         state.expr_values[node] = expr_value
 
@@ -772,19 +778,135 @@ class CalculateConstExprValues(Visitor):
             try:
                 expr_value = self.const_coerce_type(expr_value, coerced_type)
             except TypeException as e:
-                state.err(f"For type {func.return_type.__name__}: {e}", node)
+                state.err(f"For type {coerced_type.__name__}: {e}", node)
                 return
         state.expr_values[node] = expr_value
 
-    def visit_AstOp(self, node: AstOp, state: CompileState):
-        # we do not calculate compile time value of operators at the moment
-        state.expr_values[node] = None
+    def visit_AstBinaryOp(self, node: AstBinaryOp, state: CompileState):
+        # Check if both left-hand side (lhs) and right-hand side (rhs) are constants
+        lhs_value: Union[FppType, NothingType] = state.expr_values.get(node.lhs)
+        rhs_value: Union[FppType, NothingType] = state.expr_values.get(node.rhs)
+
+        if lhs_value is None or rhs_value is None:
+            state.expr_values[node] = None
+            return
+
+        # Both sides are constants, evaluate the operation if the operator is supported
+
+        # get the actual pythonic value from the fpp type
+        lhs_value = lhs_value.val
+        rhs_value = rhs_value.val
+
+        folded_value = None
+        # Arithmetic operations
+        if node.op == BinaryStackOp.ADD:
+            folded_value = lhs_value + rhs_value
+        elif node.op == BinaryStackOp.SUBTRACT:
+            folded_value = lhs_value - rhs_value
+        elif node.op == BinaryStackOp.MULTIPLY:
+            folded_value = lhs_value * rhs_value
+        elif node.op == BinaryStackOp.DIVIDE:
+            folded_value = lhs_value / rhs_value
+        elif node.op == BinaryStackOp.EXPONENT:
+            folded_value = lhs_value ** rhs_value
+        elif node.op == BinaryStackOp.FLOOR_DIVIDE:
+            folded_value = lhs_value // rhs_value
+        elif node.op == BinaryStackOp.MODULUS:
+            folded_value = lhs_value % rhs_value
+        # Boolean logic operations
+        elif node.op == BinaryStackOp.AND:
+            pass
+        elif node.op == BinaryStackOp.OR:
+            pass
+        # Inequalities
+        elif node.op == BinaryStackOp.GREATER_THAN:
+            folded_value = lhs_value > rhs_value
+        elif node.op == BinaryStackOp.GREATER_THAN_OR_EQUAL:
+            folded_value = lhs_value >= rhs_value
+        elif node.op == BinaryStackOp.LESS_THAN:
+            folded_value = lhs_value < rhs_value
+        elif node.op == BinaryStackOp.LESS_THAN_OR_EQUAL:
+            pass
+        # Equality Checking
+        elif node.op == BinaryStackOp.EQUAL:
+            pass
+        elif node.op == BinaryStackOp.NOT_EQUAL:
+            pass
+        else:
+            # missing an operation
+            assert False, node.op
+
+        if folded_value is None:
+            # give up, don't try to calculate the value of this expr at compile time
+            state.expr_values[node] = None
+            return
+        
+        if type(folded_value) == int:
+            folded_value = InternalIntType(folded_value)
+        elif type(folded_value) == float:
+            folded_value = F64Type(folded_value)
+        elif type(folded_value) == bool:
+            folded_value = BoolType(folded_value)
+        else:
+            assert False, folded_value
+
+        coerced_type = state.type_coercions.get(node, None)
+        if coerced_type is not None:
+            try:
+                folded_value = self.const_coerce_type(folded_value, coerced_type)
+            except TypeException as e:
+                state.err(f"For type {coerced_type.__name__}: {e}", node)
+                return
+        state.expr_values[node] = folded_value
+
+    def visit_AstUnaryOp(self, node: AstUnaryOp, state: CompileState):
+        value: Union[FppType, NothingType] = state.expr_values.get(node.val)
+
+        if value is None:
+            state.expr_values[node] = None
+            return
+
+        # input is constant, evaluate the operation if the operator is supported
+
+        # get the actual pythonic value from the fpp type
+        value = value.val
+        folded_value = None
+
+        if node.op == UnaryStackOp.NEGATE:
+            folded_value = -value
+        elif node.op == UnaryStackOp.IDENTITY:
+            folded_value = value
+        elif node.op == UnaryStackOp.NOT:
+            folded_value = not value
+        else:
+            # missing an operation
+            assert False, node.op
+
+        assert folded_value is not None
+
+        if type(folded_value) == int:
+            folded_value = InternalIntType(folded_value)
+        elif type(folded_value) == float:
+            folded_value = F64Type(folded_value)
+        elif type(folded_value) == bool:
+            folded_value = BoolType(folded_value)
+        else:
+            assert False, folded_value
+
+        coerced_type = state.type_coercions.get(node, None)
+        if coerced_type is not None:
+            try:
+                folded_value = self.const_coerce_type(folded_value, coerced_type)
+            except TypeException as e:
+                state.err(f"For type {coerced_type.__name__}: {e}", node)
+                return
+        state.expr_values[node] = folded_value
 
     def visit_default(self, node, state):
         # coding error, missed an expr
         assert not is_instance_compat(node, AstExpr), node
 
-
+        
 class GenerateConstExprDirectives(Visitor):
     """for each expr with a constant compile time value, generate
     directives for how to put it in its register"""
@@ -1286,79 +1408,6 @@ class GenerateBodyDirectives(Visitor):
 
         state.directives[node] = dirs
 
-# Optimization Passes
-class ConstantFolding(Visitor):
-    """Perform constant folding on binary operations that have constant inputs
-
-    Args:
-        Visitor (_type_): _description_
-    """
-    def visit_AstBinaryOp(self, node: AstBinaryOp, state: CompileState):
-        # Check if both left-hand side (lhs) and right-hand side (rhs) are constants
-        lhs_value = state.expr_values.get(node.lhs, None)
-        rhs_value = state.expr_values.get(node.rhs, None)
-
-        print(isinstance(node.lhs, AstReference), isinstance(node.rhs, AstLiteral))
-
-        #print(lhs_value, rhs_value)
-        #print(lhs_value.serialize(), rhs_value.serialize())
-        #print(state)
-
-        if lhs_value is not None and rhs_value is not None:
-            # Both sides are constants, evaluate the operation
-            print("constants")
-            #lhs_int = int.from_bytes(lhs_value.serialize(), byteorder='big', signed=False)
-            lhs_int = 0 # lhs_value.val
-            rhs_int = 0 # int.from_bytes(rhs_value.serialize(), byteorder='big', signed=False)
-            try:
-                if node.op == BinaryStackOp.ADD:
-                    folded_value = lhs_int + rhs_int
-                    print("Add operation folding")
-                elif node.op == BinaryStackOp.SUBTRACT:
-                    folded_value = lhs_int - rhs_int
-                    print("Subtract operation folding")
-                elif node.op == BinaryStackOp.MULTIPLY:
-                    folded_value = lhs_int * rhs_int
-                    print("Multiply operation folding")
-                elif node.op == BinaryStackOp.DIVIDE:
-                    folded_value = lhs_int / rhs_int
-                    print("Divide operation folding")
-                else:
-                    # Unsupported operation for constant folding
-                    return
-
-                # (((var + 2) + var1) + 3) = var + var1 + 5
-                # Replace the binary operation node with a constant literal node
-                #folded_node = AstNumber(value=folded_value)
-                #state.expr_values[node] = state.type_coercions[node.lhs]
-                #state.expr_values[node] = InternalIntType(folded_value)
-                #state.replace_node(node, folded_node)
-
-            except Exception as e:
-                state.err(f"Error during binary operation constant folding: {e}", node)
-
-    def visit_AstUnaryOp(self, node: AstUnaryOp, state: CompileState):
-        # Check if the operand is a constant
-        val = state.expr_values.get(node.val, None)
-
-        if val is not None:
-            # Operand is constant, evaluate the operation
-            try:
-                if node.op == UnaryStackOp.NEGATE:
-                    folded_value = -val
-                elif node.op == UnaryStackOp.NOT:
-                    folded_value = not val
-                else:
-                    # Unsupported operation for constant folding
-                    return
-
-                # Replace the unary operation node with a constant literal node
-                folded_node = AstLiteral(value=folded_value)
-                state.expr_values[folded_node] = folded_value
-                #state.replace_node(node, folded_node)
-
-            except Exception as e:
-                state.err(f"Error during unary operation constant folding: {e}", node)
 
 def get_base_compile_state(dictionary: str) -> CompileState:
     """return the initial state of the compiler, based on the given dict path"""
@@ -1469,8 +1518,6 @@ def compile(body: AstScopedBody, dictionary: str) -> list[Directive]:
         # okay, now that we're sure we're passing in all the right args to each func,
         # we can calculate values of type ctors etc etc
         CalculateConstExprValues(),
-        # Nick: Now we can do the constant folding before we generate any directives
-        ConstantFolding(),
         # for expressions which have constant values, generate corresponding directives
         # to put the expr on the stack
         GenerateConstExprDirectives(),

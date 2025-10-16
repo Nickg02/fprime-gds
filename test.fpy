@@ -1,7 +1,7 @@
-#var: U8 = 2
-#var = 2 + 3
-
-# Mixing operations with variables and constants makes 
-# the AST traversal more complex
-var2: U8 = 2
-var2 = var2 + 2 + 3
+var: U8 = 2
+var = 2 + 3
+var = 5 - 2
+var = 5*2 
+#var = 5 / 2
+var = 5 // 2
+var = 5 - 10
