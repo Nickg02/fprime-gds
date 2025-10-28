@@ -782,10 +782,16 @@ class CalculateConstExprValues(Visitor):
                 return
         state.expr_values[node] = expr_value
 
+    def visit_default(self, node, state):
+        # coding error, missed an expr
+        assert not is_instance_compat(node, AstExpr), node
+
+class ConstandFolding(Visitor):
+    # Constant folding related
     def visit_AstBinaryOp(self, node: AstBinaryOp, state: CompileState):
         # Check if both left-hand side (lhs) and right-hand side (rhs) are constants
-        lhs_value: Union[FppType, NothingType] = state.expr_values.get(node.lhs)
-        rhs_value: Union[FppType, NothingType] = state.expr_values.get(node.rhs)
+        lhs_value: Union[FppType, NothingType, None] = state.expr_values.get(node.lhs)
+        rhs_value: Union[FppType, NothingType, None] = state.expr_values.get(node.rhs)
 
         if lhs_value is None or rhs_value is None:
             state.expr_values[node] = None
@@ -793,6 +799,9 @@ class CalculateConstExprValues(Visitor):
 
         # Both sides are constants, evaluate the operation if the operator is supported
 
+        # Check what type the node is
+        if issubclass(type(lhs_value), NumericalType):
+            pass
         # get the actual pythonic value from the fpp type
         lhs_value = lhs_value.val
         rhs_value = rhs_value.val
@@ -859,6 +868,7 @@ class CalculateConstExprValues(Visitor):
                 return
         state.expr_values[node] = folded_value
 
+    # Constant folding related
     def visit_AstUnaryOp(self, node: AstUnaryOp, state: CompileState):
         value: Union[FppType, NothingType] = state.expr_values.get(node.val)
 
@@ -901,10 +911,6 @@ class CalculateConstExprValues(Visitor):
                 state.err(f"For type {coerced_type.__name__}: {e}", node)
                 return
         state.expr_values[node] = folded_value
-
-    def visit_default(self, node, state):
-        # coding error, missed an expr
-        assert not is_instance_compat(node, AstExpr), node
 
         
 class GenerateConstExprDirectives(Visitor):
@@ -1500,7 +1506,7 @@ def get_base_compile_state(dictionary: str) -> CompileState:
     return state
 
 
-def compile(body: AstScopedBody, dictionary: str) -> list[Directive]:
+def compile(body: AstScopedBody, dictionary: str, options: list[str] = []) -> list[Directive]:
     state = get_base_compile_state(dictionary)
     passes: list[Visitor] = [
         AssignIds(),
@@ -1518,6 +1524,13 @@ def compile(body: AstScopedBody, dictionary: str) -> list[Directive]:
         # okay, now that we're sure we're passing in all the right args to each func,
         # we can calculate values of type ctors etc etc
         CalculateConstExprValues(),
+    ]
+
+    # Do constant folding only if "constant_fold" is in options
+    if "constant_fold" in options:
+        passes.append(ConstandFolding())
+
+    passes.extend([
         # for expressions which have constant values, generate corresponding directives
         # to put the expr on the stack
         GenerateConstExprDirectives(),
@@ -1530,7 +1543,7 @@ def compile(body: AstScopedBody, dictionary: str) -> list[Directive]:
         CalculateStartLineIdx(),
         # generate directives for each body node, including the root
         GenerateBodyDirectives(),
-    ]
+    ])
 
     for compile_pass in passes:
         compile_pass.run(body, state)

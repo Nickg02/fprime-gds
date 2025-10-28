@@ -128,3 +128,13 @@ def assert_run_failure(fprime_test_api, seq: str):
         print(e)
         return
     raise RuntimeError("run_seq succeeded")
+
+
+def compare_optimized_to_regular(fprime_test_api, seq: str):
+    input_file = tempfile.NamedTemporaryFile(suffix=".fpy", delete=False)
+    output_file = tempfile.NamedTemporaryFile(suffix=".bin", delete=False)
+    Path(input_file.name).write_text(seq)
+    compile_main(["-d", default_dictionary, "-o", output_file.name, input_file.name])
+
+    bytecode_file = tempfile.NamedTemporaryFile(suffix=".fpybc", delete=False)
+    disassemble_main([output_file.name, "-o", bytecode_file.name])

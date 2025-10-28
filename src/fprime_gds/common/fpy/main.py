@@ -48,6 +48,14 @@ def compile_main(args: list[str] = None):
         default=False,
         help="Pass this to print out compiler debugging information",
     )
+    # toggle if constant folding is utilized
+    arg_parser.add_argument(
+        "-O1",
+        "--constant_folding",
+        required=False,
+        default=False,
+        help="Whether to utilize constant folding optimizations"
+    )
 
     if args is not None:
         args = arg_parser.parse_args(args)
@@ -64,7 +72,15 @@ def compile_main(args: list[str] = None):
     fprime_gds.common.fpy.error.file_name = str(args.input)
 
     body = fpy_parse(args.input.read_text())
-    directives = compile(body, args.dictionary)
+
+    # Process optimizations
+    optimizations = list()
+    if (args.constant_folding):
+        optimzations.append("constant_folding")
+
+    # End processing optimizations
+
+    directives = compile(body, args.dictionary, optimizations)
     output = args.output
     if output is None:
         if args.bytecode:
