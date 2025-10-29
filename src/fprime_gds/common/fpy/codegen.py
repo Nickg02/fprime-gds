@@ -782,7 +782,6 @@ class CalculateConstExprValues(Visitor):
                 return
         state.expr_values[node] = expr_value
 
-    # Is there a reason why this was removed?
     def visit_AstOp(self, node: AstOp, state: CompileState):
         # we do not calculate compile time value of operators at the moment
         state.expr_values[node] = None
@@ -807,7 +806,6 @@ class ConstantFolding(Visitor):
             return to_type(int(from_val.val))
         assert False, (from_val, type(from_val), to_type)
 
-    # Constant folding related
     def visit_AstBinaryOp(self, node: AstBinaryOp, state: CompileState):
         # Check if both left-hand side (lhs) and right-hand side (rhs) are constants
         lhs_value: Union[FppType, NothingType, None] = state.expr_values.get(node.lhs)
@@ -855,12 +853,12 @@ class ConstantFolding(Visitor):
         elif node.op == BinaryStackOp.LESS_THAN:
             folded_value = lhs_value < rhs_value
         elif node.op == BinaryStackOp.LESS_THAN_OR_EQUAL:
-            pass
+            folded_value = lhs_value <= rhs_value
         # Equality Checking
         elif node.op == BinaryStackOp.EQUAL:
-            pass
+            folded_value = lhs_value == rhs_value
         elif node.op == BinaryStackOp.NOT_EQUAL:
-            pass
+            folded_value = lhs_value != rhs_value
         else:
             # missing an operation
             assert False, node.op
@@ -888,7 +886,6 @@ class ConstantFolding(Visitor):
                 return
         state.expr_values[node] = folded_value
 
-    # Constant folding related
     def visit_AstUnaryOp(self, node: AstUnaryOp, state: CompileState):
         value: Union[FppType, NothingType] = state.expr_values.get(node.val)
 

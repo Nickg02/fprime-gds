@@ -77,7 +77,6 @@ def compile_main(args: list[str] = None):
     optimizations = list()
     if (args.constant_folding):
         optimizations.append("constant_folding")
-
     # End processing optimizations
 
     directives = compile(body, args.dictionary, optimizations)

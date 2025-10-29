@@ -1,9 +1,0 @@
-var: U8 = 2
-var = 2 + 3
-var = 5 - 2
-var = 5*2 
-#var = 5 / 2
-var = 5 // 2
-#var = 5 - 10
-
-varBool : bool = True

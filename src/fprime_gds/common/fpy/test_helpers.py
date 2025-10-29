@@ -147,26 +147,14 @@ def compare_optimized_to_regular(fprime_test_api, seq: str):
     with open(regular_output_file.name) as rf:
         regular_lines = rf.readlines()
 
-
-    # print(len(optimized_lines))
-    # print(regular_lines)
-
-    # diff = difflib.context_diff(regular_lines, optimized_lines, 
-    #                             fromfile=regular_output_file.name, tofile=optimized_output_file.name)
-    # delta = ''.join(diff)
-    # print(delta)
-
-    file1 = open(optimized_output_file.name, 'r')
-    file2 = open(regular_output_file.name, 'r')
-
-    diff = difflib.context_diff(file1.readlines(), file2.readlines())
+    diff = difflib.context_diff(regular_lines, optimized_lines)
     delta = ''.join(diff)
-    #print(delta)
+    print(delta)
 
-    print(f"Regular file has {len(regular_lines)} lines")
-    print(f"Optimized file has {len(optimized_lines)} lines")
-    print(f"Files are identical: {regular_lines == optimized_lines}")
+    # print(f"Regular file has {len(regular_lines)} lines")
+    # print(f"Optimized file has {len(optimized_lines)} lines")
+    # print(f"Files are identical: {regular_lines == optimized_lines}")
 
-    with open('diff_optimizations.txt', 'w') as f:
+    with open('diff_optimizations.txt', 'a') as f:
         f.write(delta)
     

@@ -145,3 +145,6 @@ cython_debug/
 
 # Notes directory
 notes/
+
+# Test outputs
+test_sequences/
