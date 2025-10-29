@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+import difflib
 import traceback
 from fprime_gds.common.fpy.types import deserialize_directives
 from fprime_gds.common.fpy.model import DirectiveErrorCode, FpySequencerModel
@@ -132,9 +133,40 @@ def assert_run_failure(fprime_test_api, seq: str):
 
 def compare_optimized_to_regular(fprime_test_api, seq: str):
     input_file = tempfile.NamedTemporaryFile(suffix=".fpy", delete=False)
-    output_file = tempfile.NamedTemporaryFile(suffix=".bin", delete=False)
+    optimized_output_file = tempfile.NamedTemporaryFile(suffix=".fpybc", delete=False)
+    regular_output_file = tempfile.NamedTemporaryFile(suffix=".fpybc", delete=False)
     Path(input_file.name).write_text(seq)
-    compile_main(["-d", default_dictionary, "-o", output_file.name, input_file.name])
+    compile_main(["-d", default_dictionary, "-o", optimized_output_file.name, "-O1", "-b", input_file.name])
+    compile_main(["-d", default_dictionary, "-o", regular_output_file.name, "-b", input_file.name])
 
-    bytecode_file = tempfile.NamedTemporaryFile(suffix=".fpybc", delete=False)
-    disassemble_main([output_file.name, "-o", bytecode_file.name])
+    # Now create a file that is the diff of optimized_output_file and regular_output_file
+    # d = difflib.Differ()
+    
+    with open(optimized_output_file.name) as of:
+        optimized_lines = of.readlines()
+    with open(regular_output_file.name) as rf:
+        regular_lines = rf.readlines()
+
+
+    # print(len(optimized_lines))
+    # print(regular_lines)
+
+    # diff = difflib.context_diff(regular_lines, optimized_lines, 
+    #                             fromfile=regular_output_file.name, tofile=optimized_output_file.name)
+    # delta = ''.join(diff)
+    # print(delta)
+
+    file1 = open(optimized_output_file.name, 'r')
+    file2 = open(regular_output_file.name, 'r')
+
+    diff = difflib.context_diff(file1.readlines(), file2.readlines())
+    delta = ''.join(diff)
+    #print(delta)
+
+    print(f"Regular file has {len(regular_lines)} lines")
+    print(f"Optimized file has {len(optimized_lines)} lines")
+    print(f"Files are identical: {regular_lines == optimized_lines}")
+
+    with open('diff_optimizations.txt', 'w') as f:
+        f.write(delta)
+    

@@ -1,4 +1,4 @@
-allocate 1
+allocate 2
 push_val 2
 store 0 1
 push_val 5
@@ -9,5 +9,5 @@ push_val 10
 store 0 1
 push_val 2
 store 0 1
-push_val 19
-store 0 1
+push_val 255
+store 1 1

@@ -6,6 +6,7 @@ from fprime_gds.common.fpy.test_helpers import (
     assert_compile_success,
     assert_run_failure,
     lookup_type,
+    compare_optimized_to_regular,
 )
 
 
@@ -21,5 +22,13 @@ def test_simple_bool(fprime_test_api):
 """
 varBool : bool = True == True
 """
+    compare_optimized_to_regular(fprime_test_api, seq)
+    assert_run_success(fprime_test_api, seq)
 
+def test_simple_addition(fprime_test_api):
+    seq = \
+"""
+varBool : U32 = 1 + 2
+"""
+    compare_optimized_to_regular(fprime_test_api, seq)
     assert_run_success(fprime_test_api, seq)

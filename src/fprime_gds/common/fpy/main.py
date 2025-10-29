@@ -52,7 +52,7 @@ def compile_main(args: list[str] = None):
     arg_parser.add_argument(
         "-O1",
         "--constant_folding",
-        required=False,
+        action="store_true",
         default=False,
         help="Whether to utilize constant folding optimizations"
     )
@@ -76,7 +76,7 @@ def compile_main(args: list[str] = None):
     # Process optimizations
     optimizations = list()
     if (args.constant_folding):
-        optimzations.append("constant_folding")
+        optimizations.append("constant_folding")
 
     # End processing optimizations
 

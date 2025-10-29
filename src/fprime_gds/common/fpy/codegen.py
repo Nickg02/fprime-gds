@@ -782,11 +782,31 @@ class CalculateConstExprValues(Visitor):
                 return
         state.expr_values[node] = expr_value
 
+    # Is there a reason why this was removed?
+    def visit_AstOp(self, node: AstOp, state: CompileState):
+        # we do not calculate compile time value of operators at the moment
+        state.expr_values[node] = None
+
     def visit_default(self, node, state):
         # coding error, missed an expr
         assert not is_instance_compat(node, AstExpr), node
 
-class ConstandFolding(Visitor):
+class ConstantFolding(Visitor):
+    
+    def const_coerce_type(self, from_val: FppType, to_type: FppTypeClass) -> FppType:
+        if type(from_val) == to_type:
+            return from_val
+        if issubclass(to_type, StringType):
+            assert type(from_val) == InternalStringType, type(from_val)
+            return to_type(from_val.val)
+        if issubclass(to_type, FloatType):
+            assert issubclass(type(from_val), NumericalType), type(from_val)
+            return to_type(float(from_val.val))
+        if issubclass(to_type, IntegerType):
+            assert issubclass(type(from_val), IntegerType), type(from_val)
+            return to_type(int(from_val.val))
+        assert False, (from_val, type(from_val), to_type)
+
     # Constant folding related
     def visit_AstBinaryOp(self, node: AstBinaryOp, state: CompileState):
         # Check if both left-hand side (lhs) and right-hand side (rhs) are constants
@@ -1526,9 +1546,9 @@ def compile(body: AstScopedBody, dictionary: str, options: list[str] = []) -> li
         CalculateConstExprValues(),
     ]
 
-    # Do constant folding only if "constant_fold" is in options
-    if "constant_fold" in options:
-        passes.append(ConstandFolding())
+    # Do constant folding only if "constant_folding" is in options
+    if "constant_folding" in options:
+        passes.append(ConstantFolding())
 
     passes.extend([
         # for expressions which have constant values, generate corresponding directives
