@@ -22,11 +22,17 @@ default_dictionary = str(
 )
 
 
-def compile_seq(fprime_test_api, seq: str) -> list[Directive]:
+def compile_seq(fprime_test_api, seq: str, options : list[str] = []) -> list[Directive]:
     input_file = tempfile.NamedTemporaryFile(suffix=".fpy", delete=False)
     output_file = tempfile.NamedTemporaryFile(suffix=".bin", delete=False)
     Path(input_file.name).write_text(seq)
-    compile_main(["-d", default_dictionary, "-o", output_file.name, input_file.name])
+
+    # if (options == []):
+    #     compile_main(["-d", default_dictionary, "-o", output_file.name, input_file.name])
+    # else:
+    #     compile_main(options + ["-d", default_dictionary, "-o", output_file.name, input_file.name])
+
+    compile_main(options + ["-d", default_dictionary, "-o", output_file.name, input_file.name])
 
     # also, run some additional tests: try reading the bin file, turning it into assembly,
     # parsing the assembly, writing it to disk and making sure it's the same as the bin file
@@ -102,27 +108,27 @@ def run_seq(
         raise RuntimeError("Sequence returned", ret)
 
 
-def assert_compile_success(fprime_test_api, seq: str):
-    compile_seq(fprime_test_api, seq)
+def assert_compile_success(fprime_test_api, seq: str, options : list[str] = []):
+    compile_seq(fprime_test_api, seq, options=options)
 
 
-def assert_run_success(fprime_test_api, seq: str, tlm: dict[str, bytes] = None):
-    compiled_file = compile_seq(fprime_test_api, seq)
+def assert_run_success(fprime_test_api, seq: str, tlm: dict[str, bytes] = None, options : list[str] = []):
+    compiled_file = compile_seq(fprime_test_api, seq, options=options)
 
     run_seq(fprime_test_api, compiled_file, tlm)
 
 
-def assert_compile_failure(fprime_test_api, seq: str):
+def assert_compile_failure(fprime_test_api, seq: str, options : list[str] = []):
     try:
-        compile_seq(fprime_test_api, seq)
+        compile_seq(fprime_test_api, seq, options)
     except BaseException as e:
         traceback.print_exc()
         return
     raise RuntimeError("compile_seq succeeded")
 
 
-def assert_run_failure(fprime_test_api, seq: str):
-    compiled_file = compile_seq(fprime_test_api, seq)
+def assert_run_failure(fprime_test_api, seq: str, options : list[str] = []):
+    compiled_file = compile_seq(fprime_test_api, seq, options=options)
     try:
         run_seq(fprime_test_api, compiled_file)
     except BaseException as e:
@@ -132,15 +138,19 @@ def assert_run_failure(fprime_test_api, seq: str):
 
 
 def compare_optimized_to_regular(fprime_test_api, seq: str):
+    """Generates text based diff of bytecode of program compiled with -O1 optimizations 
+    compared to program without optimizations
+
+    Args:
+        fprime_test_api (_type_): _description_
+        seq (str): string of fpy program to be compiled
+    """
     input_file = tempfile.NamedTemporaryFile(suffix=".fpy", delete=False)
     optimized_output_file = tempfile.NamedTemporaryFile(suffix=".fpybc", delete=False)
     regular_output_file = tempfile.NamedTemporaryFile(suffix=".fpybc", delete=False)
     Path(input_file.name).write_text(seq)
     compile_main(["-d", default_dictionary, "-o", optimized_output_file.name, "-O1", "-b", input_file.name])
     compile_main(["-d", default_dictionary, "-o", regular_output_file.name, "-b", input_file.name])
-
-    # Now create a file that is the diff of optimized_output_file and regular_output_file
-    # d = difflib.Differ()
     
     with open(optimized_output_file.name) as of:
         optimized_lines = of.readlines()
@@ -149,12 +159,7 @@ def compare_optimized_to_regular(fprime_test_api, seq: str):
 
     diff = difflib.context_diff(regular_lines, optimized_lines)
     delta = ''.join(diff)
-    print(delta)
 
-    # print(f"Regular file has {len(regular_lines)} lines")
-    # print(f"Optimized file has {len(optimized_lines)} lines")
-    # print(f"Files are identical: {regular_lines == optimized_lines}")
-
-    with open('diff_optimizations.txt', 'a') as f:
+    with open('test_sequences/diff_optimizations.txt', 'a') as f:
         f.write(delta)
     

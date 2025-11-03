@@ -644,6 +644,9 @@ class AllocateVariables(Visitor):
 class CalculateConstExprValues(Visitor):
     """for each expr, try to calculate its constant value and store it in a map. stores None if no value could be
     calculated at compile time, and NothingType if the expr had no value"""
+    def __init__(self, options : list[str]) -> None:
+        super().__init__()
+        self.options = options
 
     def const_coerce_type(self, from_val: FppType, to_type: FppTypeClass) -> FppType:
         if type(from_val) == to_type:
@@ -785,28 +788,14 @@ class CalculateConstExprValues(Visitor):
     def visit_AstOp(self, node: AstOp, state: CompileState):
         # we do not calculate compile time value of operators at the moment
         state.expr_values[node] = None
-
-    def visit_default(self, node, state):
-        # coding error, missed an expr
-        assert not is_instance_compat(node, AstExpr), node
-
-class ConstantFolding(Visitor):
     
-    def const_coerce_type(self, from_val: FppType, to_type: FppTypeClass) -> FppType:
-        if type(from_val) == to_type:
-            return from_val
-        if issubclass(to_type, StringType):
-            assert type(from_val) == InternalStringType, type(from_val)
-            return to_type(from_val.val)
-        if issubclass(to_type, FloatType):
-            assert issubclass(type(from_val), NumericalType), type(from_val)
-            return to_type(float(from_val.val))
-        if issubclass(to_type, IntegerType):
-            assert issubclass(type(from_val), IntegerType), type(from_val)
-            return to_type(int(from_val.val))
-        assert False, (from_val, type(from_val), to_type)
+    # Constant folding processing
 
     def visit_AstBinaryOp(self, node: AstBinaryOp, state: CompileState):
+        # Check if we are doing constant folding
+        if "constant_folding" not in self.options:
+            return
+
         # Check if both left-hand side (lhs) and right-hand side (rhs) are constants
         lhs_value: Union[FppType, NothingType, None] = state.expr_values.get(node.lhs)
         rhs_value: Union[FppType, NothingType, None] = state.expr_values.get(node.rhs)
@@ -833,6 +822,8 @@ class ConstantFolding(Visitor):
         elif node.op == BinaryStackOp.MULTIPLY:
             folded_value = lhs_value * rhs_value
         elif node.op == BinaryStackOp.DIVIDE:
+            # if (rhs_value == 0):
+            #     assert False, node.op
             folded_value = lhs_value / rhs_value
         elif node.op == BinaryStackOp.EXPONENT:
             folded_value = lhs_value ** rhs_value
@@ -842,9 +833,9 @@ class ConstantFolding(Visitor):
             folded_value = lhs_value % rhs_value
         # Boolean logic operations
         elif node.op == BinaryStackOp.AND:
-            pass
+            folded_value = lhs_value and rhs_value
         elif node.op == BinaryStackOp.OR:
-            pass
+            folded_value = lhs_value or rhs_value
         # Inequalities
         elif node.op == BinaryStackOp.GREATER_THAN:
             folded_value = lhs_value > rhs_value
@@ -887,6 +878,10 @@ class ConstantFolding(Visitor):
         state.expr_values[node] = folded_value
 
     def visit_AstUnaryOp(self, node: AstUnaryOp, state: CompileState):
+        # Check if we are doing constant folding
+        if "constant_folding" not in self.options:
+            return
+        
         value: Union[FppType, NothingType] = state.expr_values.get(node.val)
 
         if value is None:
@@ -928,6 +923,10 @@ class ConstantFolding(Visitor):
                 state.err(f"For type {coerced_type.__name__}: {e}", node)
                 return
         state.expr_values[node] = folded_value
+
+    def visit_default(self, node, state):
+        # coding error, missed an expr
+        assert not is_instance_compat(node, AstExpr), node    
 
         
 class GenerateConstExprDirectives(Visitor):
@@ -1540,14 +1539,7 @@ def compile(body: AstScopedBody, dictionary: str, options: list[str] = []) -> li
         AllocateVariables(),
         # okay, now that we're sure we're passing in all the right args to each func,
         # we can calculate values of type ctors etc etc
-        CalculateConstExprValues(),
-    ]
-
-    # Do constant folding only if "constant_folding" is in options
-    if "constant_folding" in options:
-        passes.append(ConstantFolding())
-
-    passes.extend([
+        CalculateConstExprValues(options),
         # for expressions which have constant values, generate corresponding directives
         # to put the expr on the stack
         GenerateConstExprDirectives(),
@@ -1560,7 +1552,7 @@ def compile(body: AstScopedBody, dictionary: str, options: list[str] = []) -> li
         CalculateStartLineIdx(),
         # generate directives for each body node, including the root
         GenerateBodyDirectives(),
-    ])
+    ]
 
     for compile_pass in passes:
         compile_pass.run(body, state)
